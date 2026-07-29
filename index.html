@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MirrorMuse — Learn Makeup with AR</title>
+  <link rel="stylesheet" href="css/style.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💄</text></svg>" />
+</head>
+<body>
+  <header>
+    <h1>💄 MirrorMuse</h1>
+    <p class="tagline">Try makeup looks live on your face — then learn to do them for real, step by step.</p>
+  </header>
+
+  <main>
+    <section class="stage-wrap">
+      <video id="camera" playsinline muted></video>
+      <canvas id="stage" width="960" height="720"></canvas>
+
+      <div id="start-panel" class="overlay-panel">
+        <h2>Your AR makeup mirror</h2>
+        <p>
+          Everything runs in your browser — the camera feed never leaves your
+          device. Pick a look, see it on your own face in real time, then follow
+          the tutorial to recreate it with real products.
+        </p>
+        <button id="start-btn" class="primary">Start camera</button>
+        <p class="fine-print">Works best in Chrome or Safari with good lighting.</p>
+      </div>
+
+      <div id="status" class="status hidden"></div>
+    </section>
+
+    <section class="controls">
+      <div class="panel">
+        <h2>Looks</h2>
+        <div id="look-list" class="look-list"></div>
+        <p id="look-description" class="look-description"></p>
+      </div>
+
+      <div class="panel">
+        <h2>Adjust</h2>
+        <label class="slider-row">
+          Intensity
+          <input id="intensity" type="range" min="0" max="100" value="80" />
+        </label>
+        <div class="button-row">
+          <button id="compare-btn" title="Hold to see your bare face">Hold to compare</button>
+          <button id="snapshot-btn">📸 Save photo</button>
+        </div>
+        <button id="mode-toggle" class="primary wide">Start tutorial</button>
+      </div>
+
+      <div id="tutorial-panel" class="panel tutorial hidden">
+        <p id="step-counter" class="step-counter"></p>
+        <h2 id="step-title"></h2>
+        <p id="step-instruction"></p>
+        <p id="step-tip" class="tip"></p>
+        <div class="button-row">
+          <button id="prev-step">← Back</button>
+          <button id="next-step" class="primary">Next step →</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <p>
+      Face tracking by <a href="https://ai.google.dev/edge/mediapipe/solutions/vision/face_landmarker" target="_blank" rel="noopener">MediaPipe Face Landmarker</a>,
+      running fully on-device. No photos or video are uploaded anywhere.
+    </p>
+  </footer>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
