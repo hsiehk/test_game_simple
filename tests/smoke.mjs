@@ -141,6 +141,58 @@ if (process.env.SMOKE_FACE_IMAGE) {
     await page.click("#next-step");
     check("photo tutorial advances", (await page.locator("#step-counter").textContent()).includes("Step 2"));
 
+    // Blending guard: painted on flat gray, every layer must dissolve into
+    // the skin. A hard-edged stroke shows up as a large jump between
+    // neighbouring pixels; blended shading only ever steps gradually.
+    const edges = await page.evaluate(async () => {
+      const { MakeupRenderer } = await import("./js/makeup.js");
+      const lm = window.__app.state.photoLandmarks;
+      // Full-strength synthetic look: photo-derived tints are relative to the
+      // reference face's own skin (a bare reference yields no-op colors), and
+      // preset strengths are too sheer to measure against. Painting at
+      // amount 1 makes the tone depth large so a band is unmistakable.
+      const look = { layers: { contour: { color: "#8a5a3c", amount: 1 } }, steps: [] };
+      const W = 900, H = 700;
+      const flat = document.createElement("canvas");
+      flat.width = W; flat.height = H;
+      const fx = flat.getContext("2d");
+      fx.fillStyle = "#808080";
+      fx.fillRect(0, 0, W, H);
+      const source = await createImageBitmap(flat);
+
+      const worst = {};
+      // Contour only. This metric catches a stroke that stops dead (the
+      // reported artifact: 19/255 before the fix, 3 after), but it cannot
+      // grade a radial wash — a smooth gradient's steepest point scores
+      // higher than a banded one — so asserting on blush would be noise.
+      for (const layer of ["contour"]) {
+        const c = document.createElement("canvas");
+        c.width = W; c.height = H;
+        const r = new MakeupRenderer(c);
+        r.render(source, lm, look, {
+          intensity: 1, enabledLayers: new Set([layer]), highlightLayer: null,
+          zoomLayer: null, compare: false, time: 0,
+        });
+        const d = c.getContext("2d").getImageData(0, 0, W, H).data;
+        // Rate of change across a short span. Per-pixel deltas stay tiny even
+        // for a visible band (blur smooths locally); what reads as "not
+        // blended" is the tone shifting sharply over a short distance.
+        const SPAN = 12;
+        let maxStep = 0;
+        for (let y = 0; y < H; y += 2) {
+          for (let x = SPAN; x < W; x++) {
+            const i = (y * W + x) * 4;
+            maxStep = Math.max(maxStep, Math.abs(d[i] - d[i - SPAN * 4]));
+          }
+        }
+        worst[layer] = maxStep;
+      }
+      return worst;
+    });
+    for (const [layer, step] of Object.entries(edges)) {
+      check(`${layer} blends without a hard edge (max step ${step}/255 over 12px)`, step <= 10);
+    }
+
     // Reference inset (visible even in mirror mode) is drawn.
     check("reference inset visible", await page.locator("#ref-inset-wrap").isVisible());
     check("reference inset has pixels", await page.evaluate(() => {
