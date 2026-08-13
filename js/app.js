@@ -1,5 +1,6 @@
 import { LOOKS, getLook, LAYER_ORDER } from "./looks.js";
 import { MakeupRenderer } from "./makeup.js";
+import { buildPhotoLook, drawReferenceCrop } from "./photolook.js";
 
 // MediaPipe is vendored locally (see vendor/) so the app is fully
 // self-contained — no CDN dependency, nothing fetched from third parties.
@@ -14,6 +15,8 @@ const els = {
   startPanel: document.getElementById("start-panel"),
   lookList: document.getElementById("look-list"),
   lookDescription: document.getElementById("look-description"),
+  photoBtn: document.getElementById("photo-btn"),
+  photoInput: document.getElementById("photo-input"),
   intensity: document.getElementById("intensity"),
   compareBtn: document.getElementById("compare-btn"),
   snapshotBtn: document.getElementById("snapshot-btn"),
@@ -23,6 +26,8 @@ const els = {
   stepTitle: document.getElementById("step-title"),
   stepInstruction: document.getElementById("step-instruction"),
   stepTip: document.getElementById("step-tip"),
+  referenceWrap: document.getElementById("reference-wrap"),
+  referenceCanvas: document.getElementById("reference-canvas"),
   prevBtn: document.getElementById("prev-step"),
   nextBtn: document.getElementById("next-step"),
 };
@@ -34,10 +39,16 @@ const state = {
   stepIndex: 0,
   compare: false,
   running: false,
+  photoLook: null,
+  photoImage: null,
+  photoLandmarks: null,
 };
 
 let renderer = null;
-let faceLandmarker = null;
+let visionModule = null;
+let visionFileset = null;
+let faceLandmarker = null;     // VIDEO mode, for the live camera
+let photoLandmarker = null;    // IMAGE mode, for uploaded reference photos
 let lastVideoTime = -1;
 let lastResult = null;
 
@@ -50,10 +61,13 @@ function setStatus(text, isError = false) {
 // ---------- UI wiring ----------
 
 function buildLookButtons() {
-  for (const look of LOOKS) {
+  els.lookList.textContent = "";
+  const entries = [...LOOKS];
+  if (state.photoLook) entries.push(state.photoLook);
+  for (const look of entries) {
     const btn = document.createElement("button");
     btn.className = "look-btn";
-    btn.textContent = look.name;
+    btn.textContent = look.id === "photo" ? "📷 From your photo" : look.name;
     btn.dataset.lookId = look.id;
     btn.addEventListener("click", () => selectLook(look.id));
     els.lookList.appendChild(btn);
@@ -69,7 +83,7 @@ function refreshLookButtons() {
 }
 
 function selectLook(id) {
-  state.look = getLook(id);
+  state.look = id === "photo" && state.photoLook ? state.photoLook : getLook(id);
   state.stepIndex = 0;
   refreshLookButtons();
   refreshTutorial();
@@ -90,6 +104,19 @@ function refreshTutorial() {
   els.prevBtn.disabled = state.stepIndex === 0;
   els.nextBtn.textContent =
     state.stepIndex === steps.length - 1 ? "Finish ✓" : "Next step →";
+
+  // Photo-derived looks get a zoomed reference crop for the current step.
+  const showReference =
+    state.look.id === "photo" && state.photoImage && state.photoLandmarks;
+  els.referenceWrap.classList.toggle("hidden", !showReference);
+  if (showReference) {
+    drawReferenceCrop(
+      els.referenceCanvas,
+      state.photoImage,
+      state.photoLandmarks,
+      step.layer,
+    );
+  }
 }
 
 function bindControls() {
@@ -129,14 +156,76 @@ function bindControls() {
     link.href = els.canvas.toDataURL("image/png");
     link.click();
   });
+
+  els.photoBtn.addEventListener("click", () => els.photoInput.click());
+  els.photoInput.addEventListener("change", () => {
+    const file = els.photoInput.files?.[0];
+    if (file) loadReferencePhoto(file);
+    els.photoInput.value = "";
+  });
+}
+
+// ---------- Reference photo analysis ----------
+
+async function loadReferencePhoto(file) {
+  els.photoBtn.disabled = true;
+  try {
+    setStatus("Analyzing your photo…");
+    const image = await createImageBitmap(file);
+    const landmarker = await getPhotoLandmarker();
+    const result = landmarker.detect(image);
+    const landmarks = result?.faceLandmarks?.[0];
+    if (!landmarks) {
+      setStatus("No face found in that photo — try a clear, front-facing shot.", true);
+      setTimeout(() => {
+        if (els.status.classList.contains("error")) setStatus("");
+      }, 6000);
+      return;
+    }
+    state.photoImage = image;
+    state.photoLandmarks = landmarks;
+    state.photoLook = buildPhotoLook(image, landmarks);
+    buildLookButtons();
+    selectLook("photo");
+    state.tutorialMode = true;
+    state.stepIndex = 0;
+    refreshTutorial();
+    setStatus("");
+  } catch (err) {
+    console.error(err);
+    setStatus("Could not analyze that photo: " + (err?.message ?? err), true);
+  } finally {
+    els.photoBtn.disabled = false;
+  }
 }
 
 // ---------- Camera + tracking ----------
 
+async function loadVision() {
+  if (!visionModule) {
+    visionModule = await import("../vendor/tasks-vision/vision_bundle.mjs");
+  }
+  if (!visionFileset) {
+    visionFileset = await visionModule.FilesetResolver.forVisionTasks(MEDIAPIPE_WASM);
+  }
+  return visionModule;
+}
+
+async function getPhotoLandmarker() {
+  if (!photoLandmarker) {
+    const vision = await loadVision();
+    photoLandmarker = await vision.FaceLandmarker.createFromOptions(visionFileset, {
+      baseOptions: { modelAssetPath: MODEL_URL, delegate: "GPU" },
+      runningMode: "IMAGE",
+      numFaces: 1,
+    });
+  }
+  return photoLandmarker;
+}
+
 async function loadTracker() {
-  const vision = await import("../vendor/tasks-vision/vision_bundle.mjs");
-  const fileset = await vision.FilesetResolver.forVisionTasks(MEDIAPIPE_WASM);
-  faceLandmarker = await vision.FaceLandmarker.createFromOptions(fileset, {
+  const vision = await loadVision();
+  faceLandmarker = await vision.FaceLandmarker.createFromOptions(visionFileset, {
     baseOptions: { modelAssetPath: MODEL_URL, delegate: "GPU" },
     runningMode: "VIDEO",
     numFaces: 1,
@@ -189,10 +278,14 @@ function frameLoop(time) {
     time,
   });
 
-  if (!landmarks) {
-    setStatus("No face detected — center your face in the frame.");
-  } else {
-    setStatus("");
+  // Never stomp an error message (e.g. from a failed photo upload); those
+  // clear themselves after a few seconds.
+  if (!els.status.classList.contains("error")) {
+    if (!landmarks) {
+      setStatus("No face detected — center your face in the frame.");
+    } else {
+      setStatus("");
+    }
   }
 
   requestAnimationFrame(frameLoop);

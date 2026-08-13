@@ -5,6 +5,7 @@
 
 export const LAYER_ORDER = [
   "foundation",
+  "contour",
   "brows",
   "eyeshadow",
   "eyeliner",

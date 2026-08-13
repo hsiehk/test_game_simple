@@ -5,13 +5,18 @@ import {
   LIPS_OUTER, LIPS_INNER, LEFT_EYE, RIGHT_EYE,
   LEFT_BROW, RIGHT_BROW, LEFT_LASH, RIGHT_LASH,
   LEFT_LASH_BROW, RIGHT_LASH_BROW,
-  LEFT_CHEEK, RIGHT_CHEEK, FACE_WIDTH_REF, FACE_OVAL,
+  LEFT_CHEEK, RIGHT_CHEEK, LEFT_CONTOUR, RIGHT_CONTOUR,
+  FACE_WIDTH_REF, FACE_OVAL,
 } from "./landmarks.js";
 import { LAYER_ORDER } from "./looks.js";
 
 function px(landmarks, index, w, h) {
   const p = landmarks[index];
   return { x: p.x * w, y: p.y * h };
+}
+
+function lerp(a, b, t) {
+  return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
 }
 
 function polygon(ctx, pts) {
@@ -21,7 +26,13 @@ function polygon(ctx, pts) {
   ctx.closePath();
 }
 
-function faceWidth(landmarks, w, h) {
+function polyline(ctx, pts) {
+  ctx.beginPath();
+  ctx.moveTo(pts[0].x, pts[0].y);
+  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+}
+
+export function faceWidth(landmarks, w, h) {
   const a = px(landmarks, FACE_WIDTH_REF[0], w, h);
   const b = px(landmarks, FACE_WIDTH_REF[1], w, h);
   return Math.hypot(a.x - b.x, a.y - b.y);
@@ -36,12 +47,7 @@ function toPoints(landmarks, indices, w, h) {
 function shadowBand(landmarks, lashIdx, browIdx, w, h, reach) {
   const lash = toPoints(landmarks, lashIdx, w, h);
   const brow = toPoints(landmarks, browIdx, w, h);
-  const upper = lash
-    .map((p, i) => ({
-      x: p.x + (brow[i].x - p.x) * reach,
-      y: p.y + (brow[i].y - p.y) * reach,
-    }))
-    .reverse();
+  const upper = lash.map((p, i) => lerp(p, brow[i], reach)).reverse();
   return lash.concat(upper);
 }
 
@@ -51,114 +57,135 @@ function cheekCenter(landmarks, pair, w, h) {
   return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
 }
 
-const painters = {
-  foundation(ctx, lm, w, h, { color, alpha, blur }) {
-    ctx.save();
-    ctx.globalCompositeOperation = "soft-light";
-    ctx.globalAlpha = alpha;
-    ctx.filter = `blur(${blur * 1.5}px)`;
-    ctx.fillStyle = color;
-    polygon(ctx, toPoints(lm, FACE_OVAL, w, h));
-    ctx.fill();
-    ctx.restore();
-  },
+// Contour stroke: a segment under the cheekbone running from near the ear
+// toward the mouth corner.
+function contourSegment(landmarks, pair, w, h) {
+  const ear = px(landmarks, pair[0], w, h);
+  const mouth = px(landmarks, pair[1], w, h);
+  return [lerp(ear, mouth, 0.22), lerp(ear, mouth, 0.62)];
+}
 
-  brows(ctx, lm, w, h, { color, alpha, blur }) {
-    ctx.save();
-    ctx.globalCompositeOperation = "multiply";
-    ctx.globalAlpha = alpha;
-    ctx.filter = `blur(${blur * 0.6}px)`;
-    ctx.fillStyle = color;
-    for (const brow of [LEFT_BROW, RIGHT_BROW]) {
-      polygon(ctx, toPoints(lm, brow, w, h));
+/**
+ * Geometry of every paintable/traceable region, in canvas pixels.
+ * Returns an array of shapes:
+ *   { kind: "poly",   pts }             closed filled/outlined polygon
+ *   { kind: "line",   pts, width }      open stroked path
+ *   { kind: "circle", center, r }       filled/outlined disc
+ * Shared by the live-view painters, the tutorial highlight, and the
+ * reference-photo zoom/trace overlay, so all three always agree.
+ */
+export function regionShapes(lm, layer, w, h) {
+  const fw = faceWidth(lm, w, h);
+  switch (layer) {
+    case "foundation":
+      return [{ kind: "poly", pts: toPoints(lm, FACE_OVAL, w, h) }];
+    case "brows":
+      return [
+        { kind: "poly", pts: toPoints(lm, LEFT_BROW, w, h) },
+        { kind: "poly", pts: toPoints(lm, RIGHT_BROW, w, h) },
+      ];
+    case "eyeshadow":
+      return [
+        { kind: "poly", pts: shadowBand(lm, LEFT_LASH, LEFT_LASH_BROW, w, h, 0.55) },
+        { kind: "poly", pts: shadowBand(lm, RIGHT_LASH, RIGHT_LASH_BROW, w, h, 0.55) },
+      ];
+    case "eyeliner":
+      return [
+        { kind: "line", pts: toPoints(lm, LEFT_LASH, w, h), width: Math.max(1.5, fw * 0.012) },
+        { kind: "line", pts: toPoints(lm, RIGHT_LASH, w, h), width: Math.max(1.5, fw * 0.012) },
+      ];
+    case "blush":
+      return [
+        { kind: "circle", center: cheekCenter(lm, LEFT_CHEEK, w, h), r: fw * 0.16 },
+        { kind: "circle", center: cheekCenter(lm, RIGHT_CHEEK, w, h), r: fw * 0.16 },
+      ];
+    case "contour":
+      return [
+        { kind: "line", pts: contourSegment(lm, LEFT_CONTOUR, w, h), width: fw * 0.09 },
+        { kind: "line", pts: contourSegment(lm, RIGHT_CONTOUR, w, h), width: fw * 0.09 },
+      ];
+    case "lipstick":
+      return [{ kind: "poly", pts: toPoints(lm, LIPS_OUTER, w, h) }];
+    default:
+      return [];
+  }
+}
+
+/** Trace a shape into the context's current path (no fill/stroke). */
+export function traceShape(ctx, shape) {
+  if (shape.kind === "circle") {
+    ctx.beginPath();
+    ctx.arc(shape.center.x, shape.center.y, shape.r, 0, Math.PI * 2);
+  } else if (shape.kind === "line") {
+    polyline(ctx, shape.pts);
+  } else {
+    polygon(ctx, shape.pts);
+  }
+}
+
+function paintShapes(ctx, shapes, { fill = true } = {}) {
+  for (const s of shapes) {
+    traceShape(ctx, s);
+    if (s.kind === "line") {
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.lineWidth = s.width;
+      ctx.stroke();
+    } else if (fill) {
       ctx.fill();
-    }
-    ctx.restore();
-  },
-
-  eyeshadow(ctx, lm, w, h, { color, alpha, blur }) {
-    ctx.save();
-    ctx.globalCompositeOperation = "multiply";
-    ctx.globalAlpha = alpha;
-    ctx.filter = `blur(${blur}px)`;
-    ctx.fillStyle = color;
-    polygon(ctx, shadowBand(lm, LEFT_LASH, LEFT_LASH_BROW, w, h, 0.55));
-    ctx.fill();
-    polygon(ctx, shadowBand(lm, RIGHT_LASH, RIGHT_LASH_BROW, w, h, 0.55));
-    ctx.fill();
-    // Never tint the eyeball itself: repaint eye openings from source pixels
-    // is handled by caller clearing with the eye polygons.
-    ctx.restore();
-  },
-
-  eyeliner(ctx, lm, w, h, { color, alpha, blur }, fw) {
-    ctx.save();
-    ctx.globalCompositeOperation = "multiply";
-    ctx.globalAlpha = alpha;
-    ctx.filter = `blur(${blur * 0.4}px)`;
-    ctx.strokeStyle = color;
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    ctx.lineWidth = Math.max(1.5, fw * 0.012);
-    for (const lash of [LEFT_LASH, RIGHT_LASH]) {
-      const pts = toPoints(lm, lash, w, h);
-      ctx.beginPath();
-      ctx.moveTo(pts[0].x, pts[0].y);
-      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+    } else {
       ctx.stroke();
     }
-    ctx.restore();
-  },
+  }
+}
 
-  blush(ctx, lm, w, h, { color, alpha, blur }, fw) {
-    ctx.save();
-    ctx.globalCompositeOperation = "multiply";
-    const r = fw * 0.16;
-    for (const pair of [LEFT_CHEEK, RIGHT_CHEEK]) {
-      const c = cheekCenter(lm, pair, w, h);
-      const g = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, r);
-      g.addColorStop(0, color);
-      g.addColorStop(1, `${color}00`);
-      ctx.globalAlpha = alpha;
-      ctx.filter = `blur(${blur}px)`;
-      ctx.fillStyle = g;
-      ctx.beginPath();
-      ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    ctx.restore();
-  },
+// Per-layer paint styling on top of the shared geometry.
+const LAYER_STYLE = {
+  foundation: { composite: "soft-light", blurScale: 1.5 },
+  contour: { composite: "multiply", blurScale: 1.6 },
+  brows: { composite: "multiply", blurScale: 0.6 },
+  eyeshadow: { composite: "multiply", blurScale: 1.0 },
+  eyeliner: { composite: "multiply", blurScale: 0.4 },
+  blush: { composite: "multiply", blurScale: 1.0, radial: true },
+  lipstick: { composite: "multiply", blurScale: 0.5, carveMouth: true },
+};
 
-  lipstick(ctx, lm, w, h, { color, alpha, blur }) {
-    ctx.save();
-    ctx.globalCompositeOperation = "multiply";
-    ctx.globalAlpha = alpha;
-    ctx.filter = `blur(${blur * 0.5}px)`;
+function paintLayer(ctx, lm, layer, w, h, { color, alpha, blur }) {
+  const style = LAYER_STYLE[layer];
+  const shapes = regionShapes(lm, layer, w, h);
+  if (!style || shapes.length === 0) return;
+
+  ctx.save();
+  ctx.globalCompositeOperation = style.composite;
+  ctx.globalAlpha = alpha;
+  ctx.filter = `blur(${blur * style.blurScale}px)`;
+
+  if (style.carveMouth) {
+    // Fill the outer lip loop with the mouth opening carved out (evenodd).
     ctx.fillStyle = color;
-    const outer = toPoints(lm, LIPS_OUTER, w, h);
+    const outer = shapes[0].pts;
     const inner = toPoints(lm, LIPS_INNER, w, h);
     polygon(ctx, outer);
-    // Carve out the mouth opening with the inner lip loop (evenodd).
     ctx.moveTo(inner[0].x, inner[0].y);
     for (let i = 1; i < inner.length; i++) ctx.lineTo(inner[i].x, inner[i].y);
     ctx.closePath();
     ctx.fill("evenodd");
-    ctx.restore();
-  },
-};
-
-// Region outlines used by tutorial mode to show "apply it here".
-const highlightRegions = {
-  foundation: (lm, w, h) => [toPoints(lm, FACE_OVAL, w, h)],
-  brows: (lm, w, h) => [toPoints(lm, LEFT_BROW, w, h), toPoints(lm, RIGHT_BROW, w, h)],
-  eyeshadow: (lm, w, h) => [
-    shadowBand(lm, LEFT_LASH, LEFT_LASH_BROW, w, h, 0.55),
-    shadowBand(lm, RIGHT_LASH, RIGHT_LASH_BROW, w, h, 0.55),
-  ],
-  eyeliner: (lm, w, h) => [toPoints(lm, LEFT_LASH, w, h), toPoints(lm, RIGHT_LASH, w, h)],
-  blush: null, // circles, handled specially
-  lipstick: (lm, w, h) => [toPoints(lm, LIPS_OUTER, w, h)],
-};
+  } else if (style.radial) {
+    for (const s of shapes) {
+      const g = ctx.createRadialGradient(s.center.x, s.center.y, 0, s.center.x, s.center.y, s.r);
+      g.addColorStop(0, color);
+      g.addColorStop(1, `${color}00`);
+      ctx.fillStyle = g;
+      traceShape(ctx, s);
+      ctx.fill();
+    }
+  } else {
+    ctx.fillStyle = color;
+    ctx.strokeStyle = color;
+    paintShapes(ctx, shapes);
+  }
+  ctx.restore();
+}
 
 export class MakeupRenderer {
   constructor(canvas) {
@@ -170,8 +197,8 @@ export class MakeupRenderer {
    * Draw one frame.
    * @param source     video element (or image) already sized to canvas
    * @param landmarks  normalized face landmarks, or null when no face
-   * @param look       look object from looks.js
-   * @param options    { intensity 0..1, enabledLayers: Set|null, showAll: bool,
+   * @param look       look object from looks.js (or a photo-derived look)
+   * @param options    { intensity 0..1, enabledLayers: Set|null,
    *                     highlightLayer: string|null, compare: bool, time: ms }
    */
   render(source, landmarks, look, options) {
@@ -197,7 +224,7 @@ export class MakeupRenderer {
         if (options.enabledLayers && !options.enabledLayers.has(layer)) continue;
         const alpha = cfg.amount * options.intensity;
         if (alpha <= 0.01) continue;
-        painters[layer](ctx, landmarks, w, h, { color: cfg.color, alpha, blur }, fw);
+        paintLayer(ctx, landmarks, layer, w, h, { color: cfg.color, alpha, blur });
       }
 
       // Restore untinted eyes on top of shadow/liner.
@@ -242,27 +269,9 @@ export class MakeupRenderer {
     ctx.shadowColor = "rgba(255,80,140,0.9)";
     ctx.shadowBlur = 8;
 
-    if (layer === "blush") {
-      const r = fw * 0.16;
-      for (const pair of [LEFT_CHEEK, RIGHT_CHEEK]) {
-        const c = cheekCenter(lm, pair, w, h);
-        ctx.beginPath();
-        ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
-        ctx.stroke();
-      }
-    } else if (layer === "eyeliner") {
-      for (const path of highlightRegions.eyeliner(lm, w, h)) {
-        ctx.beginPath();
-        ctx.moveTo(path[0].x, path[0].y);
-        for (let i = 1; i < path.length; i++) ctx.lineTo(path[i].x, path[i].y);
-        ctx.stroke();
-      }
-    } else {
-      const regions = highlightRegions[layer]?.(lm, w, h) ?? [];
-      for (const pts of regions) {
-        polygon(ctx, pts);
-        ctx.stroke();
-      }
+    for (const s of regionShapes(lm, layer, w, h)) {
+      traceShape(ctx, s);
+      ctx.stroke();
     }
     ctx.restore();
   }

@@ -197,6 +197,36 @@ button.wide { width: 100%; }
 
 .tutorial p { font-size: 0.92rem; line-height: 1.45; }
 
+.photo-upload {
+  margin-top: 0.8rem;
+  border: 1px dashed var(--accent-2);
+  background: rgba(255, 79, 139, 0.08);
+}
+
+.fine-print-panel {
+  color: var(--muted);
+  font-size: 0.75rem;
+  margin: 0.5rem 0 0;
+}
+
+.reference {
+  margin: 0.6rem 0;
+}
+
+.reference canvas {
+  width: 100%;
+  height: auto;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 143, 179, 0.35);
+  display: block;
+}
+
+.ref-caption {
+  color: var(--accent-2);
+  font-size: 0.75rem;
+  margin: 0.35rem 0 0;
+}
+
 .tip {
   color: var(--muted);
   font-style: italic;

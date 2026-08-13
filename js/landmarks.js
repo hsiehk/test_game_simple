@@ -40,6 +40,11 @@ export const RIGHT_CHEEK = [425, 280];
 // Face width reference (ear to ear) used to scale brush sizes.
 export const FACE_WIDTH_REF = [234, 454];
 
+// Contour strokes: each pair is [near-ear anchor, mouth-corner anchor];
+// the shading stroke runs along a segment between them (see makeup.js).
+export const LEFT_CONTOUR = [234, 61];
+export const RIGHT_CONTOUR = [454, 291];
+
 export const FACE_OVAL = [
   10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288,
   397, 365, 379, 378, 400, 377, 152, 148, 176, 149, 150, 136,
