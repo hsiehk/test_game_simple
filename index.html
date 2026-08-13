@@ -37,6 +37,9 @@
         <h2>Looks</h2>
         <div id="look-list" class="look-list"></div>
         <p id="look-description" class="look-description"></p>
+        <button id="photo-btn" class="wide photo-upload">📷 Learn a look from a photo</button>
+        <input id="photo-input" type="file" accept="image/*" hidden />
+        <p class="fine-print-panel">Upload any makeup photo — the colors and placement are read from it, and each tutorial step zooms into the matching area.</p>
       </div>
 
       <div class="panel">
@@ -55,6 +58,10 @@
       <div id="tutorial-panel" class="panel tutorial hidden">
         <p id="step-counter" class="step-counter"></p>
         <h2 id="step-title"></h2>
+        <div id="reference-wrap" class="reference hidden">
+          <canvas id="reference-canvas" width="360" height="200"></canvas>
+          <p class="ref-caption">Reference photo, zoomed to this step — trace the outlined shape on your face</p>
+        </div>
         <p id="step-instruction"></p>
         <p id="step-tip" class="tip"></p>
         <div class="button-row">

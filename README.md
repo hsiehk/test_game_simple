@@ -19,6 +19,14 @@ and no photos or video ever leave your machine.
   pro tips; the current step's region (lip line, crease, apples of the cheeks…)
   is outlined on your face with an animated dashed highlight, and the virtual
   makeup builds up step by step as you advance.
+- **Learn from a photo** — upload any makeup photo (an Instagram look, a
+  celebrity, a friend). The same face mesh is detected on the photo, each
+  product's color is sampled from its region and expressed as a tint relative
+  to the photo's skin tone, and a 7-step tutorial is generated. Each step
+  zooms the reference photo into the area being taught (liner, crease,
+  contour…) with the trace shape outlined there — and the matching shape is
+  outlined on your own face to follow.
+- **Contour layer** — cheekbone shading, included in photo-derived looks.
 - **Intensity slider**, **hold-to-compare** (see your bare face), and
   **photo capture**.
 
@@ -61,6 +69,8 @@ js/app.js             camera, MediaPipe wiring, UI state, render loop
 js/makeup.js          canvas renderer: paints each makeup layer from landmarks
 js/landmarks.js       face-mesh region definitions (lips, eyes, brows, cheeks…)
 js/looks.js           preset looks + tutorial step content
+js/photolook.js       reference-photo analysis: color sampling, generated
+                      tutorial, zoomed reference crops with trace outlines
 vendor/               MediaPipe tasks-vision (JS + WASM) and the face model,
                       vendored so the app has zero CDN/third-party requests
 tests/                Node data tests + Playwright browser smoke test
