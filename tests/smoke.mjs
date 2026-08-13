@@ -141,6 +141,49 @@ if (process.env.SMOKE_FACE_IMAGE) {
     await page.click("#next-step");
     check("photo tutorial advances", (await page.locator("#step-counter").textContent()).includes("Step 2"));
 
+    // Reference inset (visible even in mirror mode) is drawn.
+    check("reference inset visible", await page.locator("#ref-inset-wrap").isVisible());
+    check("reference inset has pixels", await page.evaluate(() => {
+      const c = document.getElementById("ref-inset");
+      const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+      return d.some((v, i) => i % 4 !== 3 && v > 0);
+    }));
+
+    // Step zoom: drive the renderer with the photo's own landmarks (the fake
+    // camera has no face) and confirm the view actually magnifies the region
+    // being taught, and relaxes to the whole face when zoom is off.
+    const zoom = await page.evaluate(async () => {
+      const { MakeupRenderer } = await import("./js/makeup.js");
+      const img = window.__app.state.photoImage;
+      const lm = window.__app.state.photoLandmarks;
+      const c = document.createElement("canvas");
+      c.width = 960; c.height = 720;
+      const r = new MakeupRenderer(c);
+      const settle = (zoomLayer) => {
+        for (let i = 0; i < 60; i++) {
+          r.render(img, lm, window.__app.state.photoLook, {
+            intensity: 0.8, enabledLayers: null, highlightLayer: zoomLayer,
+            zoomLayer, compare: false, time: 0,
+          });
+        }
+        return { scale: r.view.scale, cx: r.view.cx, cy: r.view.cy };
+      };
+      return { eye: settle("eyeliner"), lips: settle("lipstick"), off: settle(null) };
+    });
+    check("zooms in for the eyeliner step", zoom.eye.scale > 1.3);
+    check("zooms in for the lipstick step", zoom.lips.scale > 1.3);
+    check("frames a different area per step", Math.abs(zoom.eye.cy - zoom.lips.cy) > 20);
+    check("returns to the whole face when zoom is off",
+      Math.abs(zoom.off.scale - 1) < 0.05);
+
+    // The zoom toggle flips the state the render loop reads.
+    check("zoom follows the step by default",
+      await page.evaluate(() => window.__app.state.zoomToStep === true));
+    await page.click("#zoom-btn");
+    check("zoom toggle turns it off",
+      await page.evaluate(() => window.__app.state.zoomToStep === false));
+    await page.click("#zoom-btn");
+
     // Ghost overlay: press-and-hold the mirror, drag right to raise opacity.
     // Stepping the tutorial can scroll the panel into view, pushing the
     // canvas off-screen — bring it back before aiming synthetic pointers.

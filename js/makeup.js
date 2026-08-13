@@ -77,6 +77,21 @@ function shadowBand(landmarks, lashIdx, browIdx, w, h, reach) {
   return lash.concat(upper);
 }
 
+// Eyeshadow shape plus the axis its color fades along: real shadow is
+// densest at the lash line and diffuses toward the brow, so the band
+// carries gradient endpoints rather than being filled flat.
+function shadowShape(lm, lashIdx, browIdx, w, h) {
+  const reach = 0.55;
+  const pts = shadowBand(lm, lashIdx, browIdx, w, h, reach);
+  const n = lashIdx.length;
+  const mid = Math.floor(n / 2);
+  return {
+    kind: "poly",
+    pts,
+    grad: { from: pts[mid], to: pts[pts.length - 1 - mid] },
+  };
+}
+
 function cheekCenter(landmarks, pair, w, h) {
   const a = px(landmarks, pair[0], w, h);
   const b = px(landmarks, pair[1], w, h);
@@ -112,8 +127,8 @@ export function regionShapes(lm, layer, w, h) {
       ];
     case "eyeshadow":
       return [
-        { kind: "poly", pts: shadowBand(lm, LEFT_LASH, LEFT_LASH_BROW, w, h, 0.55) },
-        { kind: "poly", pts: shadowBand(lm, RIGHT_LASH, RIGHT_LASH_BROW, w, h, 0.55) },
+        shadowShape(lm, LEFT_LASH, LEFT_LASH_BROW, w, h),
+        shadowShape(lm, RIGHT_LASH, RIGHT_LASH_BROW, w, h),
       ];
     case "eyeliner":
       return [
@@ -135,6 +150,43 @@ export function regionShapes(lm, layer, w, h) {
     default:
       return [];
   }
+}
+
+/** Bounding box of a set of shapes: { x, y, w, h }. */
+export function shapesBounds(shapes) {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const s of shapes) {
+    const pts = s.kind === "circle"
+      ? [
+          { x: s.center.x - s.r, y: s.center.y - s.r },
+          { x: s.center.x + s.r, y: s.center.y + s.r },
+        ]
+      : s.pts;
+    for (const p of pts) {
+      minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
+      minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
+    }
+  }
+  if (!Number.isFinite(minX)) return null;
+  return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+}
+
+/**
+ * Where the camera should sit to teach a layer: the region's box padded
+ * out for working room, as a center + scale that fits it into w x h.
+ * maxScale keeps a tiny region (a lash line) from filling the frame at an
+ * unusable magnification.
+ */
+export function zoomTargetFor(lm, layer, w, h, { pad = 1.22, maxScale = 4 } = {}) {
+  const box = shapesBounds(regionShapes(lm, layer, w, h));
+  if (!box) return null;
+  const bw = Math.max(box.w * pad, 1);
+  const bh = Math.max(box.h * pad, 1);
+  return {
+    cx: box.x + box.w / 2,
+    cy: box.y + box.h / 2,
+    scale: Math.min(maxScale, Math.max(1, Math.min(w / bw, h / bh))),
+  };
 }
 
 /** Trace a shape into the context's current path (no fill/stroke). */
@@ -167,14 +219,18 @@ function paintShapes(ctx, shapes, { fill = true } = {}) {
 
 // Per-layer paint styling on top of the shared geometry.
 const LAYER_STYLE = {
-  foundation: { composite: "soft-light", blurScale: 1.5 },
+  foundation: { composite: "soft-light", blurScale: 1.5, skinOnly: true },
   contour: { composite: "multiply", blurScale: 1.6 },
   brows: { composite: "multiply", blurScale: 0.6 },
-  eyeshadow: { composite: "multiply", blurScale: 1.0 },
+  eyeshadow: { composite: "multiply", blurScale: 1.2, graded: true },
   eyeliner: { composite: "multiply", blurScale: 0.4 },
   blush: { composite: "multiply", blurScale: 1.0, radial: true },
   lipstick: { composite: "multiply", blurScale: 0.5, carveMouth: true },
 };
+
+// Features foundation must not wash over — tinting brows, eyes and lips
+// is what makes a base layer read as an orange filter instead of skin.
+const FOUNDATION_HOLES = [LEFT_EYE, RIGHT_EYE, LEFT_BROW, RIGHT_BROW, LIPS_OUTER];
 
 function paintLayer(ctx, lm, layer, w, h, { color, alpha, blur }) {
   const style = LAYER_STYLE[layer];
@@ -186,7 +242,29 @@ function paintLayer(ctx, lm, layer, w, h, { color, alpha, blur }) {
   ctx.globalAlpha = alpha;
   ctx.filter = `blur(${blur * style.blurScale}px)`;
 
-  if (style.carveMouth) {
+  if (style.skinOnly) {
+    // Face oval with the features punched out (evenodd).
+    ctx.fillStyle = color;
+    polygon(ctx, shapes[0].pts);
+    for (const hole of FOUNDATION_HOLES) {
+      const pts = toPoints(lm, hole, w, h);
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+      ctx.closePath();
+    }
+    ctx.fill("evenodd");
+  } else if (style.graded) {
+    // Densest at the lash line, fading out toward the brow.
+    for (const s of shapes) {
+      const g = ctx.createLinearGradient(s.grad.from.x, s.grad.from.y, s.grad.to.x, s.grad.to.y);
+      g.addColorStop(0, color);
+      g.addColorStop(0.55, `${color}b0`);
+      g.addColorStop(1, `${color}00`);
+      ctx.fillStyle = g;
+      traceShape(ctx, s);
+      ctx.fill();
+    }
+  } else if (style.carveMouth) {
     // Fill the outer lip loop with the mouth opening carved out (evenodd).
     ctx.fillStyle = color;
     const outer = shapes[0].pts;
@@ -217,6 +295,26 @@ export class MakeupRenderer {
   constructor(canvas) {
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d");
+    // Current (smoothed) camera; null until the first frame sizes it.
+    this.view = null;
+  }
+
+  /** Ease the live view toward the step's target region. */
+  #updateView(landmarks, zoomLayer, w, h) {
+    const identity = { cx: w / 2, cy: h / 2, scale: 1 };
+    let target = identity;
+    if (landmarks && zoomLayer) {
+      target = zoomTargetFor(landmarks, zoomLayer, w, h) ?? identity;
+    }
+    if (!this.view) {
+      this.view = { ...target };
+      return this.view;
+    }
+    const k = 0.16; // per-frame easing; a glide, not a jump
+    this.view.cx += (target.cx - this.view.cx) * k;
+    this.view.cy += (target.cy - this.view.cy) * k;
+    this.view.scale += (target.scale - this.view.scale) * k;
+    return this.view;
   }
 
   /**
@@ -232,9 +330,14 @@ export class MakeupRenderer {
     const w = canvas.width;
     const h = canvas.height;
 
+    const view = this.#updateView(landmarks, options.zoomLayer, w, h);
+
     ctx.save();
-    // Mirror for selfie view.
+    // Mirror for selfie view, then frame the region being taught.
     ctx.setTransform(-1, 0, 0, 1, w, 0);
+    ctx.translate(w / 2, h / 2);
+    ctx.scale(view.scale, view.scale);
+    ctx.translate(-view.cx, -view.cy);
     ctx.filter = "none";
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = "source-over";
@@ -263,7 +366,9 @@ export class MakeupRenderer {
       }
 
       if (options.highlightLayer) {
-        this.#drawHighlight(landmarks, options.highlightLayer, w, h, fw, options.time ?? 0);
+        this.#drawHighlight(
+          landmarks, options.highlightLayer, w, h, fw, options.time ?? 0, view.scale,
+        );
       }
     }
 
@@ -290,22 +395,21 @@ export class MakeupRenderer {
 
   #restoreEyes(source, lm, w, h) {
     const { ctx } = this;
-    ctx.save();
-    ctx.globalCompositeOperation = "source-over";
-    ctx.globalAlpha = 1;
-    ctx.filter = "none";
+    // Save/restore per eye so the caller's transform (mirror + zoom) is
+    // inherited rather than rebuilt.
     for (const eye of [LEFT_EYE, RIGHT_EYE]) {
+      ctx.save();
+      ctx.globalCompositeOperation = "source-over";
+      ctx.globalAlpha = 1;
+      ctx.filter = "none";
       polygon(ctx, toPoints(lm, eye, w, h));
       ctx.clip();
       ctx.drawImage(source, 0, 0, w, h);
       ctx.restore();
-      ctx.save();
-      ctx.setTransform(-1, 0, 0, 1, w, 0);
     }
-    ctx.restore();
   }
 
-  #drawHighlight(lm, layer, w, h, fw, time) {
+  #drawHighlight(lm, layer, w, h, fw, time, zoom = 1) {
     const { ctx } = this;
     const pulse = 0.55 + 0.45 * Math.sin(time / 300);
     ctx.save();
@@ -313,11 +417,12 @@ export class MakeupRenderer {
     ctx.globalAlpha = 0.9 * pulse;
     ctx.filter = "none";
     ctx.strokeStyle = "#ffffff";
-    ctx.lineWidth = Math.max(1.5, fw * 0.008);
-    ctx.setLineDash([8, 6]);
+    // Divide by the zoom so the guide keeps its on-screen weight.
+    ctx.lineWidth = Math.max(1.5, fw * 0.008) / zoom;
+    ctx.setLineDash([8 / zoom, 6 / zoom]);
     ctx.lineDashOffset = -(time / 40) % 14;
     ctx.shadowColor = "rgba(255,80,140,0.9)";
-    ctx.shadowBlur = 8;
+    ctx.shadowBlur = 8 / zoom;
 
     for (const s of regionShapes(lm, layer, w, h)) {
       traceShape(ctx, s);

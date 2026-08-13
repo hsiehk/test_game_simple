@@ -10,7 +10,7 @@
 // Pure color math lives at the top (unit-testable in Node); everything that
 // needs a canvas/DOM is below.
 
-import { regionShapes, traceShape } from "./makeup.js";
+import { regionShapes, traceShape, shapesBounds } from "./makeup.js";
 import { LAYER_ORDER } from "./looks.js";
 
 // ---------- pure helpers (no DOM) ----------
@@ -192,26 +192,14 @@ export function drawReferenceCrop(canvas, image, landmarks, layer) {
   const shapes = regionShapes(landmarks, layer, iw, ih);
   if (shapes.length === 0) return;
 
-  // Bounding box of all shapes, padded.
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for (const s of shapes) {
-    const pts = s.kind === "circle"
-      ? [
-          { x: s.center.x - s.r, y: s.center.y - s.r },
-          { x: s.center.x + s.r, y: s.center.y + s.r },
-        ]
-      : s.pts;
-    for (const p of pts) {
-      minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
-      minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
-    }
-  }
-  const padX = (maxX - minX) * 0.35 + iw * 0.02;
-  const padY = (maxY - minY) * 0.45 + ih * 0.02;
-  const cropX = Math.max(0, minX - padX);
-  const cropY = Math.max(0, minY - padY);
-  const cropW = Math.min(iw, maxX + padX) - cropX;
-  const cropH = Math.min(ih, maxY + padY) - cropY;
+  const box = shapesBounds(shapes);
+  if (!box) return;
+  const padX = box.w * 0.35 + iw * 0.02;
+  const padY = box.h * 0.45 + ih * 0.02;
+  const cropX = Math.max(0, box.x - padX);
+  const cropY = Math.max(0, box.y - padY);
+  const cropW = Math.min(iw, box.x + box.w + padX) - cropX;
+  const cropH = Math.min(ih, box.y + box.h + padY) - cropY;
 
   // Fit the crop into the canvas (contain, centered).
   const ctx = canvas.getContext("2d");
