@@ -31,6 +31,11 @@
 
       <div id="status" class="status hidden"></div>
 
+      <div id="ref-inset-wrap" class="ref-inset-wrap hidden">
+        <canvas id="ref-inset" width="360" height="220"></canvas>
+        <span class="ref-inset-label">Reference</span>
+      </div>
+
       <div id="mirror-hud" class="mirror-hud">
         <div class="hud-top">
           <span id="hud-chip" class="hud-chip"></span>
@@ -62,6 +67,7 @@
           <button id="compare-btn" title="Hold to see your bare face">Hold to compare</button>
           <button id="snapshot-btn">📸 Save photo</button>
         </div>
+        <button id="zoom-btn" class="wide">🔍 Zoom: following the step</button>
         <button id="mirror-btn" class="wide">🪞 Mirror mode</button>
         <button id="mode-toggle" class="primary wide">Start tutorial</button>
       </div>

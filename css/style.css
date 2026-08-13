@@ -248,6 +248,47 @@ footer {
 
 footer a { color: var(--accent-2); }
 
+/* Reference inset: the photo's matching region, pinned on the mirror so
+   it stays visible in mirror mode where the side panels are hidden. */
+
+.ref-inset-wrap {
+  position: absolute;
+  right: 0.8rem;
+  bottom: 0.8rem;
+  width: 30%;
+  max-width: 260px;
+  min-width: 130px;
+  z-index: 44;
+  pointer-events: none;
+}
+
+.ref-inset-wrap canvas {
+  width: 100%;
+  height: auto;
+  display: block;
+  border-radius: 10px;
+  border: 2px solid rgba(255, 143, 179, 0.75);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.55);
+}
+
+.ref-inset-label {
+  position: absolute;
+  top: 0.35rem;
+  left: 0.45rem;
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.55);
+  padding: 0.1rem 0.4rem;
+  border-radius: 999px;
+}
+
+button.active-toggle {
+  border: 1px solid var(--accent);
+  background: rgba(255, 79, 139, 0.16);
+}
+
 /* ---------- Mirror mode: clean fullscreen mirror ---------- */
 
 .mirror-hud { display: none; }

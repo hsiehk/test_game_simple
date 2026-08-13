@@ -19,12 +19,12 @@ export const LOOKS = [
     name: "Natural / Everyday",
     description: "A barely-there look that evens skin and adds a healthy flush. The best place to start if you're new to makeup.",
     layers: {
-      foundation: { color: "#e8b89a", amount: 0.35 },
-      brows: { color: "#5b4232", amount: 0.4 },
-      eyeshadow: { color: "#c98d6b", amount: 0.35 },
-      eyeliner: { color: "#4a3427", amount: 0.35 },
-      blush: { color: "#e88a7a", amount: 0.45 },
-      lipstick: { color: "#c96f6b", amount: 0.5 },
+      foundation: { color: "#f0cdb4", amount: 0.18 },
+      brows: { color: "#6b5140", amount: 0.3 },
+      eyeshadow: { color: "#c19a86", amount: 0.3 },
+      eyeliner: { color: "#5c4436", amount: 0.4 },
+      blush: { color: "#e8a48f", amount: 0.32 },
+      lipstick: { color: "#c58a80", amount: 0.45 },
     },
     steps: [
       {
@@ -70,12 +70,13 @@ export const LOOKS = [
     name: "Soft Glam",
     description: "Warm shimmery lids, sculpted cheeks and a rosy lip — polished but wearable, great for dinners and events.",
     layers: {
-      foundation: { color: "#e5ad8c", amount: 0.5 },
-      brows: { color: "#4c3728", amount: 0.55 },
-      eyeshadow: { color: "#b0653f", amount: 0.55 },
-      eyeliner: { color: "#2e2018", amount: 0.55 },
-      blush: { color: "#e0766a", amount: 0.55 },
-      lipstick: { color: "#b85560", amount: 0.65 },
+      foundation: { color: "#eec3a6", amount: 0.22 },
+      contour: { color: "#b98a6a", amount: 0.3 },
+      brows: { color: "#5a4334", amount: 0.4 },
+      eyeshadow: { color: "#a9704a", amount: 0.5 },
+      eyeliner: { color: "#33251c", amount: 0.6 },
+      blush: { color: "#dc8f83", amount: 0.4 },
+      lipstick: { color: "#b06f6c", amount: 0.6 },
     },
     steps: [
       {
@@ -83,6 +84,12 @@ export const LOOKS = [
         title: "Full-coverage base",
         instruction: "Apply foundation with a damp sponge, starting at the center of the face and blending outward. Set your T-zone with a light dusting of powder.",
         tip: "Match your foundation at your jawline, not your wrist.",
+      },
+      {
+        layer: "contour",
+        title: "Sculpt the cheekbones",
+        instruction: "Suck in your cheeks to find the hollow beneath the bone, then sweep a cool-toned contour along the highlighted line, starting at your ear and stopping level with the outer corner of your eye.",
+        tip: "Stop the contour before it reaches the corner of your mouth — going further drags the face down.",
       },
       {
         layer: "brows",
@@ -121,12 +128,13 @@ export const LOOKS = [
     name: "Smokey Eye",
     description: "The classic evening look: deep blended shadow and bold liner with a muted lip so the eyes do the talking.",
     layers: {
-      foundation: { color: "#e2a988", amount: 0.5 },
-      brows: { color: "#3c2b1f", amount: 0.6 },
-      eyeshadow: { color: "#4a3648", amount: 0.7 },
-      eyeliner: { color: "#14100d", amount: 0.8 },
-      blush: { color: "#c97f6f", amount: 0.35 },
-      lipstick: { color: "#b98a80", amount: 0.45 },
+      foundation: { color: "#ecc0a4", amount: 0.2 },
+      contour: { color: "#ad8064", amount: 0.28 },
+      brows: { color: "#4a3729", amount: 0.45 },
+      eyeshadow: { color: "#544c52", amount: 0.62 },
+      eyeliner: { color: "#1a171c", amount: 0.75 },
+      blush: { color: "#cf948a", amount: 0.28 },
+      lipstick: { color: "#b98f85", amount: 0.4 },
     },
     steps: [
       {
@@ -134,6 +142,12 @@ export const LOOKS = [
         title: "Base and under-eye prep",
         instruction: "Apply foundation, then an extra thin layer of concealer under the eyes — smokey shadow can drop fallout, and a clean base makes cleanup easy.",
         tip: "Do your eyes before your base if you're worried about fallout.",
+      },
+      {
+        layer: "contour",
+        title: "Quiet sculpting",
+        instruction: "Add a soft contour along the highlighted line under the cheekbones to give the face structure that holds up against a dark eye, then blend the edges upward until no line remains.",
+        tip: "Under warm evening light, blend contour further than you think you need to.",
       },
       {
         layer: "brows",
@@ -172,12 +186,12 @@ export const LOOKS = [
     name: "Bold Lip",
     description: "Clean minimal eyes with one show-stopping red lip. Deceptively simple — precision is the skill you'll practice here.",
     layers: {
-      foundation: { color: "#e8b294", amount: 0.45 },
-      brows: { color: "#543d2c", amount: 0.5 },
-      eyeshadow: { color: "#d8b49a", amount: 0.25 },
-      eyeliner: { color: "#241a14", amount: 0.5 },
-      blush: { color: "#dd8474", amount: 0.3 },
-      lipstick: { color: "#c22b3d", amount: 0.85 },
+      foundation: { color: "#f0c8ac", amount: 0.2 },
+      brows: { color: "#5a4536", amount: 0.35 },
+      eyeshadow: { color: "#cfa892", amount: 0.22 },
+      eyeliner: { color: "#2b211a", amount: 0.5 },
+      blush: { color: "#dfa08c", amount: 0.25 },
+      lipstick: { color: "#c0243a", amount: 0.8 },
     },
     steps: [
       {

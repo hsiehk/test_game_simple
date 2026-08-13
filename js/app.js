@@ -33,6 +33,9 @@ const els = {
   stepTip: document.getElementById("step-tip"),
   referenceWrap: document.getElementById("reference-wrap"),
   referenceCanvas: document.getElementById("reference-canvas"),
+  refInset: document.getElementById("ref-inset"),
+  refInsetWrap: document.getElementById("ref-inset-wrap"),
+  zoomBtn: document.getElementById("zoom-btn"),
   prevBtn: document.getElementById("prev-step"),
   nextBtn: document.getElementById("next-step"),
   sendPhoneBtn: document.getElementById("send-phone-btn"),
@@ -61,6 +64,7 @@ const state = {
   photoLandmarks: null,
   ghostActive: false,
   ghostOpacity: 0.55,
+  zoomToStep: true,
 };
 
 let renderer = null;
@@ -141,13 +145,11 @@ function refreshTutorial() {
   const showReference =
     state.look.id === "photo" && state.photoImage && state.photoLandmarks;
   els.referenceWrap.classList.toggle("hidden", !showReference);
+  els.refInsetWrap.classList.toggle("hidden", !showReference);
   if (showReference) {
-    drawReferenceCrop(
-      els.referenceCanvas,
-      state.photoImage,
-      state.photoLandmarks,
-      step.layer,
-    );
+    for (const canvas of [els.referenceCanvas, els.refInset]) {
+      drawReferenceCrop(canvas, state.photoImage, state.photoLandmarks, step.layer);
+    }
   }
 }
 
@@ -158,6 +160,13 @@ function setMirrorMode(on) {
   document.body.classList.toggle("mirror-mode", on);
   els.mirrorBtn.textContent = on ? "Exit mirror mode" : "🪞 Mirror mode";
   refreshHud();
+}
+
+function refreshZoomBtn() {
+  els.zoomBtn.textContent = state.zoomToStep
+    ? "🔍 Zoom: following the step"
+    : "🔍 Zoom: whole face";
+  els.zoomBtn.classList.toggle("active-toggle", state.zoomToStep);
 }
 
 function refreshHud() {
@@ -366,6 +375,11 @@ function bindControls() {
     els.photoInput.value = "";
   });
 
+  els.zoomBtn.addEventListener("click", () => {
+    state.zoomToStep = !state.zoomToStep;
+    refreshZoomBtn();
+  });
+
   els.mirrorBtn.addEventListener("click", () => setMirrorMode(!state.mirrorMode));
   els.hudExit.addEventListener("click", () => setMirrorMode(false));
   els.hudPrev.addEventListener("click", () => stepBy(-1));
@@ -464,6 +478,7 @@ function frameLoop(time) {
     intensity: state.intensity,
     enabledLayers,
     highlightLayer: step?.layer ?? null,
+    zoomLayer: state.zoomToStep && step ? step.layer : null,
     compare: state.compare,
     ghost,
     time,
@@ -520,6 +535,7 @@ async function init() {
   }
   buildLookButtons();
   bindControls();
+  refreshZoomBtn();
   refreshTutorial();
   els.startBtn.addEventListener("click", start);
   // Expose a minimal hook for smoke tests.
