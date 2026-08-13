@@ -38,6 +38,32 @@ export function faceWidth(landmarks, w, h) {
   return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
+/**
+ * Eye centers and the derived similarity frame (midpoint, interocular
+ * distance, eye-line angle) used to align a reference photo over the
+ * live face.
+ */
+export function eyeFrame(landmarks, w, h) {
+  const avg = (indices) => {
+    let x = 0, y = 0;
+    for (const i of indices) {
+      const p = px(landmarks, i, w, h);
+      x += p.x;
+      y += p.y;
+    }
+    return { x: x / indices.length, y: y / indices.length };
+  };
+  const left = avg(LEFT_EYE);
+  const right = avg(RIGHT_EYE);
+  return {
+    left,
+    right,
+    mid: { x: (left.x + right.x) / 2, y: (left.y + right.y) / 2 },
+    dist: Math.hypot(right.x - left.x, right.y - left.y),
+    angle: Math.atan2(right.y - left.y, right.x - left.x),
+  };
+}
+
 function toPoints(landmarks, indices, w, h) {
   return indices.map((i) => px(landmarks, i, w, h));
 }
@@ -230,11 +256,35 @@ export class MakeupRenderer {
       // Restore untinted eyes on top of shadow/liner.
       this.#restoreEyes(source, landmarks, w, h);
 
+      // Ghost overlay: the reference photo aligned over the live face
+      // (matched by eye midpoint, interocular scale, and eye-line angle).
+      if (options.ghost) {
+        this.#drawGhost(options.ghost, landmarks, w, h);
+      }
+
       if (options.highlightLayer) {
         this.#drawHighlight(landmarks, options.highlightLayer, w, h, fw, options.time ?? 0);
       }
     }
 
+    ctx.restore();
+  }
+
+  #drawGhost(ghost, liveLm, w, h) {
+    const { ctx } = this;
+    const live = eyeFrame(liveLm, w, h);
+    const ref = eyeFrame(ghost.landmarks, ghost.image.width, ghost.image.height);
+    if (ref.dist < 1) return;
+    const s = live.dist / ref.dist;
+    ctx.save();
+    ctx.globalCompositeOperation = "source-over";
+    ctx.globalAlpha = ghost.opacity;
+    ctx.filter = "none";
+    ctx.translate(live.mid.x, live.mid.y);
+    ctx.rotate(live.angle - ref.angle);
+    ctx.scale(s, s);
+    ctx.translate(-ref.mid.x, -ref.mid.y);
+    ctx.drawImage(ghost.image, 0, 0);
     ctx.restore();
   }
 

@@ -140,6 +140,66 @@ if (process.env.SMOKE_FACE_IMAGE) {
     // Step through: each step should redraw the crop for its own region.
     await page.click("#next-step");
     check("photo tutorial advances", (await page.locator("#step-counter").textContent()).includes("Step 2"));
+
+    // Ghost overlay: press-and-hold the mirror, drag right to raise opacity.
+    // Stepping the tutorial can scroll the panel into view, pushing the
+    // canvas off-screen — bring it back before aiming synthetic pointers.
+    await page.locator("#stage").scrollIntoViewIfNeeded();
+    const stage = await page.locator("#stage").boundingBox();
+    const cx = stage.x + stage.width / 2;
+    const cy = stage.y + stage.height / 2;
+    await page.mouse.move(cx, cy);
+    await page.mouse.down();
+    await page.waitForTimeout(450);
+    check("hold activates ghost overlay",
+      await page.evaluate(() => window.__app.state.ghostActive));
+    const before = await page.evaluate(() => window.__app.state.ghostOpacity);
+    await page.mouse.move(cx + stage.width * 0.25, cy, { steps: 5 });
+    const after = await page.evaluate(() => window.__app.state.ghostOpacity);
+    check("dragging right raises ghost opacity", after > before);
+    await page.mouse.up();
+    check("release hides ghost overlay",
+      await page.evaluate(() => !window.__app.state.ghostActive));
+
+    // Mirror mode: panels hidden, HUD visible, tap zones step the tutorial.
+    await page.click("#mirror-btn");
+    check("mirror mode hides panels",
+      await page.evaluate(() =>
+        document.body.classList.contains("mirror-mode") &&
+        getComputedStyle(document.querySelector(".controls")).display === "none"));
+    check("HUD shows current step",
+      (await page.locator("#hud-chip").textContent()).includes("2/"));
+    await page.locator("#stage").scrollIntoViewIfNeeded();
+    const stage2 = await page.locator("#stage").boundingBox();
+    await page.mouse.click(stage2.x + stage2.width * 0.9, stage2.y + stage2.height / 2);
+    check("tap right edge advances step",
+      await page.evaluate(() => window.__app.state.stepIndex === 2));
+    await page.mouse.click(stage2.x + stage2.width * 0.1, stage2.y + stage2.height / 2);
+    check("tap left edge goes back",
+      await page.evaluate(() => window.__app.state.stepIndex === 1));
+    await page.click("#hud-exit");
+    check("exit returns from mirror mode",
+      await page.evaluate(() => !document.body.classList.contains("mirror-mode")));
+
+    // Send-to-phone: QR renders and its URL opens the companion view.
+    await page.click("#send-phone-btn");
+    check("QR modal opens with a QR image",
+      await page.locator("#qr-box img").count() === 1);
+    const companionUrl = await page.evaluate(() =>
+      document.getElementById("qr-box").dataset.url);
+    check("companion URL embeds payload", companionUrl.includes("#companion="));
+    const phone = await browser.newPage({ viewport: { width: 390, height: 780 } });
+    await phone.goto(companionUrl);
+    check("companion view renders on phone",
+      await phone.locator("#companion-view").isVisible() &&
+      (await phone.locator("#companion-counter").textContent()).includes("Step 1 of"));
+    await phone.click("#companion-next");
+    check("companion steps advance",
+      (await phone.locator("#companion-counter").textContent()).includes("Step 2 of"));
+    check("companion hides the mirror UI",
+      await phone.evaluate(() =>
+        getComputedStyle(document.querySelector("main")).display === "none"));
+    await phone.close();
   }
 }
 

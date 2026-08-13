@@ -58,13 +58,13 @@ export const PHOTO_STEPS = [
   {
     layer: "foundation",
     title: "Match the base",
-    instruction: "Look at the reference crop: how even and matte is the skin? Apply foundation to match that finish, blending from the center of your face outward.",
+    instruction: "Look at your reference photo: how even and matte is the skin? Apply foundation to match that finish, blending from the center of your face outward.",
     tip: "Aim to match the reference's finish (dewy vs matte), not its skin tone.",
   },
   {
     layer: "contour",
     title: "Copy the contour",
-    instruction: "The dashed line in the reference shows where the shading sits under the cheekbones. Suck in your cheeks to find your own hollow, then blend contour along the matching line on your face.",
+    instruction: "The dashed line shows where the shading sits under the cheekbones in your reference. Suck in your cheeks to find your own hollow, then blend contour along the matching line on your face.",
     tip: "Blend upward — a harsh lower edge is the most common contour mistake.",
   },
   {
@@ -76,13 +76,13 @@ export const PHOTO_STEPS = [
   {
     layer: "eyeshadow",
     title: "Recreate the eye shadow",
-    instruction: "The reference is zoomed to the lid. Note how far the color extends toward the brow and past the outer corner, then build the same shape inside the outlined band on your own lids, in thin blended layers.",
+    instruction: "Study the lid in your reference: note how far the color extends toward the brow and past the outer corner, then build the same shape inside the outlined band on your own lids, in thin blended layers.",
     tip: "Match where the color *stops* — placement matters more than the exact shade.",
   },
   {
     layer: "eyeliner",
     title: "Trace the liner",
-    instruction: "Zoomed in, you can see the liner's thickness and wing angle on the reference. Trace the dashed lash line on your face, matching that thickness, and finish the wing at the same angle.",
+    instruction: "Look closely at the liner's thickness and wing angle in your reference. Trace the dashed lash line on your face, matching that thickness, and finish the wing at the same angle.",
     tip: "Draw the wing first, then connect it back along the lash line.",
   },
   {
@@ -94,7 +94,7 @@ export const PHOTO_STEPS = [
   {
     layer: "lipstick",
     title: "Finish with the lips",
-    instruction: "The reference crop shows the lip edge and finish. Line your lips following the outline on your face, fill with the matched color, and copy the reference's finish — blotted matte or glossy.",
+    instruction: "Your reference shows the lip edge and finish. Line your lips following the outline on your face, fill with the matched color, and copy the reference's finish — blotted matte or glossy.",
     tip: "Overlining more than a millimetre rarely reads natural in person.",
   },
 ];
