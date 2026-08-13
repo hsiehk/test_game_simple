@@ -27,6 +27,17 @@ and no photos or video ever leave your machine.
   contour…) with the trace shape outlined there — and the matching shape is
   outlined on your own face to follow.
 - **Contour layer** — cheekbone shading, included in photo-derived looks.
+- **Mirror mode** — hides every panel for a clean, full-bleed mirror. The
+  on-face trace lines and color fills stay; a minimal HUD keeps the step name
+  and arrows, and tapping the left/right third of the screen steps the
+  tutorial.
+- **Hold-to-ghost** — press and hold the mirror to overlay your reference
+  photo, aligned to your face by eye position, scale and tilt. Drag left or
+  right while holding to fade it up or down.
+- **Send instructions to your phone** — the whole tutorial is compressed into
+  a QR code; scan it and your phone shows the written steps (with each step's
+  sampled color) while the big screen stays a clean mirror. No server, no
+  upload — the tutorial travels inside the QR itself.
 - **Intensity slider**, **hold-to-compare** (see your bare face), and
   **photo capture**.
 
@@ -71,10 +82,14 @@ js/landmarks.js       face-mesh region definitions (lips, eyes, brows, cheeks…
 js/looks.js           preset looks + tutorial step content
 js/photolook.js       reference-photo analysis: color sampling, generated
                       tutorial, zoomed reference crops with trace outlines
+js/companion.js       phone hand-off: packs/compresses the tutorial into a
+                      URL fragment for the QR code, and parses it back
 vendor/               MediaPipe tasks-vision (JS + WASM) and the face model,
                       vendored so the app has zero CDN/third-party requests
 tests/                Node data tests + Playwright browser smoke test
 ```
 
 Face tracking: [MediaPipe Face Landmarker](https://ai.google.dev/edge/mediapipe/solutions/vision/face_landmarker)
-(Apache-2.0), vendored in `vendor/`.
+(Apache-2.0). QR rendering:
+[qrcode-generator](https://github.com/kazuhikoarase/qrcode-generator) (MIT).
+Both vendored in `vendor/`.

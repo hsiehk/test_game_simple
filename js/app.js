@@ -1,6 +1,10 @@
 import { LOOKS, getLook, LAYER_ORDER } from "./looks.js";
 import { MakeupRenderer } from "./makeup.js";
 import { buildPhotoLook, drawReferenceCrop } from "./photolook.js";
+import {
+  packSteps, encodePayload, buildCompanionUrl, parseCompanionHash,
+} from "./companion.js";
+import { qrcode } from "../vendor/qrcode/qrcode.mjs";
 
 // MediaPipe is vendored locally (see vendor/) so the app is fully
 // self-contained — no CDN dependency, nothing fetched from third parties.
@@ -20,6 +24,7 @@ const els = {
   intensity: document.getElementById("intensity"),
   compareBtn: document.getElementById("compare-btn"),
   snapshotBtn: document.getElementById("snapshot-btn"),
+  mirrorBtn: document.getElementById("mirror-btn"),
   modeToggle: document.getElementById("mode-toggle"),
   tutorialPanel: document.getElementById("tutorial-panel"),
   stepCounter: document.getElementById("step-counter"),
@@ -30,6 +35,17 @@ const els = {
   referenceCanvas: document.getElementById("reference-canvas"),
   prevBtn: document.getElementById("prev-step"),
   nextBtn: document.getElementById("next-step"),
+  sendPhoneBtn: document.getElementById("send-phone-btn"),
+  qrModal: document.getElementById("qr-modal"),
+  qrBox: document.getElementById("qr-box"),
+  qrClose: document.getElementById("qr-close"),
+  hud: document.getElementById("mirror-hud"),
+  hudChip: document.getElementById("hud-chip"),
+  hudPrev: document.getElementById("hud-prev"),
+  hudNext: document.getElementById("hud-next"),
+  hudExit: document.getElementById("hud-exit"),
+  hudHint: document.getElementById("hud-hint"),
+  companionView: document.getElementById("companion-view"),
 };
 
 const state = {
@@ -39,9 +55,12 @@ const state = {
   stepIndex: 0,
   compare: false,
   running: false,
+  mirrorMode: false,
   photoLook: null,
   photoImage: null,
   photoLandmarks: null,
+  ghostActive: false,
+  ghostOpacity: 0.55,
 };
 
 let renderer = null;
@@ -89,6 +108,18 @@ function selectLook(id) {
   refreshTutorial();
 }
 
+function stepBy(delta) {
+  const last = state.look.steps.length - 1;
+  const next = state.stepIndex + delta;
+  if (next < 0) return;
+  if (next > last) {
+    state.tutorialMode = false;
+  } else {
+    state.stepIndex = next;
+  }
+  refreshTutorial();
+}
+
 function refreshTutorial() {
   const steps = state.look.steps;
   const step = steps[state.stepIndex];
@@ -96,6 +127,7 @@ function refreshTutorial() {
   els.modeToggle.textContent = state.tutorialMode
     ? "Exit tutorial"
     : "Start tutorial";
+  refreshHud();
   if (!state.tutorialMode || !step) return;
   els.stepCounter.textContent = `Step ${state.stepIndex + 1} of ${steps.length}`;
   els.stepTitle.textContent = step.title;
@@ -119,50 +151,151 @@ function refreshTutorial() {
   }
 }
 
-function bindControls() {
-  els.intensity.addEventListener("input", () => {
-    state.intensity = Number(els.intensity.value) / 100;
-  });
+// ---------- Mirror mode ----------
 
-  els.modeToggle.addEventListener("click", () => {
-    state.tutorialMode = !state.tutorialMode;
-    state.stepIndex = 0;
-    refreshTutorial();
-  });
+function setMirrorMode(on) {
+  state.mirrorMode = on;
+  document.body.classList.toggle("mirror-mode", on);
+  els.mirrorBtn.textContent = on ? "Exit mirror mode" : "🪞 Mirror mode";
+  refreshHud();
+}
 
-  els.prevBtn.addEventListener("click", () => {
-    if (state.stepIndex > 0) state.stepIndex--;
-    refreshTutorial();
-  });
+function refreshHud() {
+  if (!state.mirrorMode) return;
+  const step = state.tutorialMode ? state.look.steps[state.stepIndex] : null;
+  els.hudChip.textContent = step
+    ? `${state.stepIndex + 1}/${state.look.steps.length} · ${step.title}`
+    : state.look.name;
+  els.hudPrev.classList.toggle("hidden", !state.tutorialMode);
+  els.hudNext.classList.toggle("hidden", !state.tutorialMode);
+  els.hudHint.classList.toggle("hidden", !state.photoImage);
+}
 
-  els.nextBtn.addEventListener("click", () => {
-    if (state.stepIndex < state.look.steps.length - 1) {
-      state.stepIndex++;
-    } else {
-      state.tutorialMode = false;
+// ---------- Ghost overlay gesture ----------
+// Press and hold the mirror to overlay the uploaded photo on your face;
+// drag left/right while holding to change its opacity. A quick tap in
+// mirror mode steps the tutorial (left edge back, right edge forward).
+
+const HOLD_MS = 250;
+const TAP_SLOP_PX = 12;
+
+function bindStageGestures() {
+  const gesture = {
+    active: false, pointerId: null,
+    downX: 0, downY: 0, downTime: 0, moved: false, timer: null, startOpacity: 0,
+  };
+
+  els.canvas.addEventListener("pointerdown", (e) => {
+    if (!state.running) return;
+    gesture.active = true;
+    gesture.pointerId = e.pointerId;
+    gesture.downX = e.clientX;
+    gesture.downY = e.clientY;
+    gesture.downTime = performance.now();
+    gesture.moved = false;
+    els.canvas.setPointerCapture(e.pointerId);
+    if (state.photoImage && state.photoLandmarks) {
+      gesture.timer = setTimeout(() => {
+        if (!gesture.moved) {
+          state.ghostActive = true;
+          gesture.startOpacity = state.ghostOpacity;
+          gesture.downX = e.clientX; // re-anchor drag at activation
+        }
+      }, HOLD_MS);
     }
-    refreshTutorial();
   });
 
-  const startCompare = () => (state.compare = true);
-  const endCompare = () => (state.compare = false);
-  els.compareBtn.addEventListener("pointerdown", startCompare);
-  els.compareBtn.addEventListener("pointerup", endCompare);
-  els.compareBtn.addEventListener("pointerleave", endCompare);
-
-  els.snapshotBtn.addEventListener("click", () => {
-    const link = document.createElement("a");
-    link.download = `makeup-${state.look.id}-${Date.now()}.png`;
-    link.href = els.canvas.toDataURL("image/png");
-    link.click();
+  els.canvas.addEventListener("pointermove", (e) => {
+    // Only a pointer that went down on the mirror drives the gesture;
+    // hovering across the canvas must not disturb its state.
+    if (!gesture.active || e.pointerId !== gesture.pointerId) return;
+    const dx = e.clientX - gesture.downX;
+    const dy = e.clientY - gesture.downY;
+    if (!state.ghostActive && Math.hypot(dx, dy) > TAP_SLOP_PX) gesture.moved = true;
+    if (state.ghostActive) {
+      const rect = els.canvas.getBoundingClientRect();
+      state.ghostOpacity = Math.min(0.95, Math.max(0.05,
+        gesture.startOpacity + (dx / rect.width) * 1.2));
+    }
   });
 
-  els.photoBtn.addEventListener("click", () => els.photoInput.click());
-  els.photoInput.addEventListener("change", () => {
-    const file = els.photoInput.files?.[0];
-    if (file) loadReferencePhoto(file);
-    els.photoInput.value = "";
+  const end = (e) => {
+    if (!gesture.active) return;
+    gesture.active = false;
+    clearTimeout(gesture.timer);
+    if (state.ghostActive) {
+      state.ghostActive = false;
+      return;
+    }
+    const quickTap =
+      performance.now() - gesture.downTime < 300 && !gesture.moved;
+    if (quickTap && state.mirrorMode && state.tutorialMode) {
+      const rect = els.canvas.getBoundingClientRect();
+      const fx = (e.clientX - rect.left) / rect.width;
+      if (fx < 0.35) stepBy(-1);
+      else if (fx > 0.65) stepBy(1);
+    }
+  };
+  els.canvas.addEventListener("pointerup", end);
+  els.canvas.addEventListener("pointercancel", () => {
+    gesture.active = false;
+    clearTimeout(gesture.timer);
+    state.ghostActive = false;
   });
+}
+
+// ---------- Send instructions to phone ----------
+
+async function showCompanionQr() {
+  els.sendPhoneBtn.disabled = true;
+  try {
+    const payload = await encodePayload(packSteps(state.look));
+    const url = buildCompanionUrl(location.href, payload);
+    const qr = qrcode(0, "L");
+    qr.addData(url);
+    qr.make();
+    els.qrBox.innerHTML = qr.createImgTag(3, 8);
+    els.qrBox.dataset.url = url;
+    els.qrModal.classList.remove("hidden");
+  } catch (err) {
+    console.error(err);
+    setStatus("Could not build the phone link: " + (err?.message ?? err), true);
+  } finally {
+    els.sendPhoneBtn.disabled = false;
+  }
+}
+
+// ---------- Companion (phone) mode ----------
+
+function renderCompanion(data) {
+  document.body.classList.add("companion");
+  let index = 0;
+  const total = data.steps.length;
+  const el = (id) => document.getElementById(id);
+
+  const show = () => {
+    const s = data.steps[index];
+    el("companion-name").textContent = data.name;
+    el("companion-counter").textContent = `Step ${index + 1} of ${total}`;
+    el("companion-title").textContent = s.t;
+    el("companion-instruction").textContent = s.i;
+    el("companion-tip").textContent = `Tip: ${s.p}`;
+    const swatch = el("companion-swatch");
+    swatch.style.background = s.c ?? "transparent";
+    swatch.classList.toggle("hidden", !s.c);
+    el("companion-prev").disabled = index === 0;
+    el("companion-next").textContent = index === total - 1 ? "Done ✓" : "Next step →";
+  };
+
+  el("companion-prev").addEventListener("click", () => {
+    if (index > 0) index--;
+    show();
+  });
+  el("companion-next").addEventListener("click", () => {
+    if (index < total - 1) index++;
+    show();
+  });
+  show();
 }
 
 // ---------- Reference photo analysis ----------
@@ -197,6 +330,54 @@ async function loadReferencePhoto(file) {
   } finally {
     els.photoBtn.disabled = false;
   }
+}
+
+function bindControls() {
+  els.intensity.addEventListener("input", () => {
+    state.intensity = Number(els.intensity.value) / 100;
+  });
+
+  els.modeToggle.addEventListener("click", () => {
+    state.tutorialMode = !state.tutorialMode;
+    state.stepIndex = 0;
+    refreshTutorial();
+  });
+
+  els.prevBtn.addEventListener("click", () => stepBy(-1));
+  els.nextBtn.addEventListener("click", () => stepBy(1));
+
+  const startCompare = () => (state.compare = true);
+  const endCompare = () => (state.compare = false);
+  els.compareBtn.addEventListener("pointerdown", startCompare);
+  els.compareBtn.addEventListener("pointerup", endCompare);
+  els.compareBtn.addEventListener("pointerleave", endCompare);
+
+  els.snapshotBtn.addEventListener("click", () => {
+    const link = document.createElement("a");
+    link.download = `makeup-${state.look.id}-${Date.now()}.png`;
+    link.href = els.canvas.toDataURL("image/png");
+    link.click();
+  });
+
+  els.photoBtn.addEventListener("click", () => els.photoInput.click());
+  els.photoInput.addEventListener("change", () => {
+    const file = els.photoInput.files?.[0];
+    if (file) loadReferencePhoto(file);
+    els.photoInput.value = "";
+  });
+
+  els.mirrorBtn.addEventListener("click", () => setMirrorMode(!state.mirrorMode));
+  els.hudExit.addEventListener("click", () => setMirrorMode(false));
+  els.hudPrev.addEventListener("click", () => stepBy(-1));
+  els.hudNext.addEventListener("click", () => stepBy(1));
+
+  els.sendPhoneBtn.addEventListener("click", showCompanionQr);
+  els.qrClose.addEventListener("click", () => els.qrModal.classList.add("hidden"));
+  els.qrModal.addEventListener("click", (e) => {
+    if (e.target === els.qrModal) els.qrModal.classList.add("hidden");
+  });
+
+  bindStageGestures();
 }
 
 // ---------- Camera + tracking ----------
@@ -270,11 +451,21 @@ function frameLoop(time) {
     );
   }
 
+  const ghost =
+    state.ghostActive && state.photoImage && state.photoLandmarks
+      ? {
+          image: state.photoImage,
+          landmarks: state.photoLandmarks,
+          opacity: state.ghostOpacity,
+        }
+      : null;
+
   renderer.render(els.video, landmarks, state.look, {
     intensity: state.intensity,
     enabledLayers,
     highlightLayer: step?.layer ?? null,
     compare: state.compare,
+    ghost,
     time,
   });
 
@@ -320,10 +511,19 @@ async function start() {
 
 // ---------- Init ----------
 
-buildLookButtons();
-bindControls();
-refreshTutorial();
-els.startBtn.addEventListener("click", start);
+async function init() {
+  const companionData = await parseCompanionHash(location.hash);
+  if (companionData) {
+    renderCompanion(companionData);
+    window.__app = { companion: companionData };
+    return;
+  }
+  buildLookButtons();
+  bindControls();
+  refreshTutorial();
+  els.startBtn.addEventListener("click", start);
+  // Expose a minimal hook for smoke tests.
+  window.__app = { state, looks: LOOKS, layerOrder: LAYER_ORDER };
+}
 
-// Expose a minimal hook for smoke tests.
-window.__app = { state, looks: LOOKS, layerOrder: LAYER_ORDER };
+init();
