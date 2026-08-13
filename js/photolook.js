@@ -44,7 +44,7 @@ export function amountFromTint(tint, { floor = 0.15, cap = 0.8 } = {}) {
 // full-face contour without looking painted on).
 const LAYER_CAPS = {
   foundation: { floor: 0.2, cap: 0.4 },
-  contour: { floor: 0.1, cap: 0.5 },
+  contour: { floor: 0.08, cap: 0.3 },
   brows: { floor: 0.15, cap: 0.6 },
   eyeshadow: { floor: 0.15, cap: 0.7 },
   eyeliner: { floor: 0.2, cap: 0.8 },

@@ -220,7 +220,7 @@ function paintShapes(ctx, shapes, { fill = true } = {}) {
 // Per-layer paint styling on top of the shared geometry.
 const LAYER_STYLE = {
   foundation: { composite: "soft-light", blurScale: 1.5, skinOnly: true },
-  contour: { composite: "multiply", blurScale: 1.6 },
+  contour: { composite: "multiply", blurScale: 2.8, fadeEnds: true },
   brows: { composite: "multiply", blurScale: 0.6 },
   eyeshadow: { composite: "multiply", blurScale: 1.2, graded: true },
   eyeliner: { composite: "multiply", blurScale: 0.4 },
@@ -277,11 +277,33 @@ function paintLayer(ctx, lm, layer, w, h, { color, alpha, blur }) {
   } else if (style.radial) {
     for (const s of shapes) {
       const g = ctx.createRadialGradient(s.center.x, s.center.y, 0, s.center.x, s.center.y, s.r);
+      // Eased falloff: a straight ramp leaves a visible disc edge.
       g.addColorStop(0, color);
+      g.addColorStop(0.3, `${color}d0`);
+      g.addColorStop(0.6, `${color}70`);
+      g.addColorStop(0.82, `${color}26`);
       g.addColorStop(1, `${color}00`);
       ctx.fillStyle = g;
       traceShape(ctx, s);
       ctx.fill();
+    }
+  } else if (style.fadeEnds) {
+    // Shading laid down by a brush has no start or stop: fade the stroke
+    // out along its length so it dissolves into skin at both ends.
+    for (const s of shapes) {
+      const a = s.pts[0];
+      const b = s.pts[s.pts.length - 1];
+      const g = ctx.createLinearGradient(a.x, a.y, b.x, b.y);
+      g.addColorStop(0, `${color}00`);
+      g.addColorStop(0.3, `${color}d9`);
+      g.addColorStop(0.65, `${color}b3`);
+      g.addColorStop(1, `${color}00`);
+      ctx.strokeStyle = g;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.lineWidth = s.width;
+      traceShape(ctx, s);
+      ctx.stroke();
     }
   } else {
     ctx.fillStyle = color;
@@ -345,7 +367,10 @@ export class MakeupRenderer {
 
     if (landmarks && look && !options.compare) {
       const fw = faceWidth(landmarks, w, h);
-      const blur = Math.max(2, fw * 0.03);
+      // ctx.filter blur is measured in device pixels and ignores the current
+      // transform, so without this the zoom would sharpen every edge just as
+      // the user leans in.
+      const blur = Math.max(2, fw * 0.03) * view.scale;
 
       for (const layer of LAYER_ORDER) {
         const cfg = look.layers[layer];
