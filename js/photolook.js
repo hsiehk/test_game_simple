@@ -48,6 +48,8 @@ const LAYER_CAPS = {
   brows: { floor: 0.15, cap: 0.6 },
   eyeshadow: { floor: 0.15, cap: 0.7 },
   eyeliner: { floor: 0.2, cap: 0.8 },
+  linerWing: { floor: 0.15, cap: 0.8 },
+  linerLower: { floor: 0.12, cap: 0.7 },
   blush: { floor: 0.15, cap: 0.6 },
   lipstick: { floor: 0.25, cap: 0.85 },
 };
@@ -82,8 +84,20 @@ export const PHOTO_STEPS = [
   {
     layer: "eyeliner",
     title: "Trace the liner",
-    instruction: "Look closely at the liner's thickness and wing angle in your reference. Trace the dashed lash line on your face, matching that thickness, and finish the wing at the same angle.",
-    tip: "Draw the wing first, then connect it back along the lash line.",
+    instruction: "Look closely at how thick the liner sits on the upper lash line in your reference, and where it starts. Trace the dashed line on your own lash line, keeping it thinnest at the inner corner and building thickness toward the outside. The corner and lower line come next.",
+    tip: "Wiggle the pencil into the base of the lashes first so no pale gaps show through.",
+  },
+  {
+    layer: "linerWing",
+    title: "Extend the outer corner",
+    instruction: "Look at where the liner leaves the eye in your reference: how far past the corner it reaches and whether it lifts up or drops down. Trace the same tail on your face, starting thick at the corner and pressing lighter as you go so it tapers to a point.",
+    tip: "Look straight ahead in the mirror while you draw the tail — drawing it with your eye closed lands it in the wrong place once you open up.",
+  },
+  {
+    layer: "linerLower",
+    title: "Line the lower lash line",
+    instruction: "Follow the outlined line under your lower lashes, working from the outer corner inward and stopping around the middle of the eye. Keep it finer than the upper line, and connect it into the tail so the two meet at the corner.",
+    tip: "Smudge the lower line with a cotton bud — a crisp line under the eye reads harsh in daylight.",
   },
   {
     layer: "blush",

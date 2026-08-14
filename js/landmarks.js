@@ -28,6 +28,11 @@ export const RIGHT_BROW = [300, 293, 334, 296, 336, 285, 295, 282, 283, 276];
 export const LEFT_LASH = [33, 246, 161, 160, 159, 158, 157, 173, 133];
 export const RIGHT_LASH = [263, 466, 388, 387, 386, 385, 384, 398, 362];
 
+// Lower lash lines, outer corner -> inner corner (same ordering as above,
+// so the outer end is always index 0 for both eyes).
+export const LEFT_LOWER_LASH = [33, 7, 163, 144, 145, 153, 154, 155, 133];
+export const RIGHT_LOWER_LASH = [263, 249, 390, 373, 374, 380, 381, 382, 362];
+
 // For each lash-line point, the brow point roughly above it. The eyeshadow
 // band is built by lerping from the lash line toward these.
 export const LEFT_LASH_BROW = [46, 46, 53, 52, 52, 65, 65, 55, 55];
