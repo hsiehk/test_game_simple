@@ -4,6 +4,7 @@
 import {
   LIPS_OUTER, LIPS_INNER, LEFT_EYE, RIGHT_EYE,
   LEFT_BROW, RIGHT_BROW, LEFT_LASH, RIGHT_LASH,
+  LEFT_LOWER_LASH, RIGHT_LOWER_LASH,
   LEFT_LASH_BROW, RIGHT_LASH_BROW,
   LEFT_CHEEK, RIGHT_CHEEK, LEFT_CONTOUR, RIGHT_CONTOUR,
   FACE_WIDTH_REF, FACE_OVAL,
@@ -92,6 +93,36 @@ function shadowShape(lm, lashIdx, browIdx, w, h) {
   };
 }
 
+// The tail past the outer corner: continues the lash line's own exit
+// direction so it follows each eye's natural angle. The lash line curves
+// downward as it leaves the corner, so a lift is applied to bring the tail
+// back to roughly level — extended and soft rather than flicked up or
+// dragged down.
+function outerWing(lm, lashIdx, w, h) {
+  const pts = toPoints(lm, lashIdx, w, h);
+  const outer = pts[0];
+  const along = pts[3] ?? pts[1];
+  const dx = outer.x - along.x;
+  const dy = outer.y - along.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const eyeW = Math.hypot(outer.x - pts[pts.length - 1].x, outer.y - pts[pts.length - 1].y);
+  const reach = eyeW * 0.3;
+  return [
+    outer,
+    {
+      x: outer.x + (dx / len) * reach,
+      y: outer.y + (dy / len) * reach - eyeW * 0.09,
+    },
+  ];
+}
+
+// Lower liner is flattering along the outer half only; running it into the
+// inner corner closes the eye up.
+function lowerLinerPts(lm, lowerIdx, w, h) {
+  const pts = toPoints(lm, lowerIdx, w, h);
+  return pts.slice(0, Math.max(2, Math.round(pts.length * 0.6)));
+}
+
 function cheekCenter(landmarks, pair, w, h) {
   const a = px(landmarks, pair[0], w, h);
   const b = px(landmarks, pair[1], w, h);
@@ -134,6 +165,16 @@ export function regionShapes(lm, layer, w, h) {
       return [
         { kind: "line", pts: toPoints(lm, LEFT_LASH, w, h), width: Math.max(1.5, fw * 0.012) },
         { kind: "line", pts: toPoints(lm, RIGHT_LASH, w, h), width: Math.max(1.5, fw * 0.012) },
+      ];
+    case "linerWing":
+      return [
+        { kind: "line", pts: outerWing(lm, LEFT_LASH, w, h), width: Math.max(1.5, fw * 0.013) },
+        { kind: "line", pts: outerWing(lm, RIGHT_LASH, w, h), width: Math.max(1.5, fw * 0.013) },
+      ];
+    case "linerLower":
+      return [
+        { kind: "line", pts: lowerLinerPts(lm, LEFT_LOWER_LASH, w, h), width: Math.max(1.2, fw * 0.009) },
+        { kind: "line", pts: lowerLinerPts(lm, RIGHT_LOWER_LASH, w, h), width: Math.max(1.2, fw * 0.009) },
       ];
     case "blush":
       return [
@@ -224,6 +265,10 @@ const LAYER_STYLE = {
   brows: { composite: "multiply", blurScale: 0.6 },
   eyeshadow: { composite: "multiply", blurScale: 1.2, graded: true },
   eyeliner: { composite: "multiply", blurScale: 0.4 },
+  // The tail is drawn from the corner outward, so it tapers to nothing at
+  // the tip; the lower line softens at both ends.
+  linerWing: { composite: "multiply", blurScale: 0.5, fadeTip: true },
+  linerLower: { composite: "multiply", blurScale: 0.7, fadeEnds: true },
   blush: { composite: "multiply", blurScale: 1.0, radial: true },
   lipstick: { composite: "multiply", blurScale: 0.5, carveMouth: true },
 };
@@ -287,17 +332,18 @@ function paintLayer(ctx, lm, layer, w, h, { color, alpha, blur }) {
       traceShape(ctx, s);
       ctx.fill();
     }
-  } else if (style.fadeEnds) {
-    // Shading laid down by a brush has no start or stop: fade the stroke
-    // out along its length so it dissolves into skin at both ends.
+  } else if (style.fadeEnds || style.fadeTip) {
+    // Product laid down by a brush or pencil has no hard start or stop.
+    // fadeEnds dissolves at both ends (shading, lower liner); fadeTip keeps
+    // the base solid and tapers to nothing (a wing's point).
+    const stops = style.fadeTip
+      ? [[0, ""], [0.5, "e6"], [0.8, "8c"], [1, "00"]]
+      : [[0, "00"], [0.3, "d9"], [0.65, "b3"], [1, "00"]];
     for (const s of shapes) {
       const a = s.pts[0];
       const b = s.pts[s.pts.length - 1];
       const g = ctx.createLinearGradient(a.x, a.y, b.x, b.y);
-      g.addColorStop(0, `${color}00`);
-      g.addColorStop(0.3, `${color}d9`);
-      g.addColorStop(0.65, `${color}b3`);
-      g.addColorStop(1, `${color}00`);
+      for (const [at, alpha] of stops) g.addColorStop(at, `${color}${alpha}`);
       ctx.strokeStyle = g;
       ctx.lineCap = "round";
       ctx.lineJoin = "round";

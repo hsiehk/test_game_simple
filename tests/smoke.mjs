@@ -47,8 +47,8 @@ const check = (name, ok) => { results.push([name, ok]); console.log(ok ? "PASS" 
 
 await page.goto("http://localhost:8123/");
 check("page loads with title", (await page.title()).includes("MirrorMuse"));
-check("4 look buttons render", (await page.locator(".look-btn").count()) === 4);
-check("app state exposed", await page.evaluate(() => window.__app?.looks?.length === 4));
+check("5 look buttons render", (await page.locator(".look-btn").count()) === 5);
+check("app state exposed", await page.evaluate(() => window.__app?.looks?.length === 5));
 
 // Tutorial UI works without camera.
 await page.click("#mode-toggle");

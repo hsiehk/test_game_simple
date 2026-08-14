@@ -13,7 +13,8 @@ and no photos or video ever leave your machine.
 - **Live AR try-on** — real-time 478-point face tracking (MediaPipe Face
   Landmarker) drives virtual foundation, brows, eyeshadow, eyeliner, blush and
   lipstick that follow your face.
-- **Preset looks** — Natural/Everyday, Soft Glam, Smokey Eye, Bold Lip, with
+- **Preset looks** — Natural/Everyday, Soft Glam, Smokey Eye, Puppy Liner
+  (K-beauty), Bold Lip, with
   palettes drawn from editorial conventions (sheer skin, taupe and bronze
   lids, graphite smoke, blue-red lip) rather than saturated filter colors.
 - **Tutorial mode** — the heart of the app. Each look has 6 written steps with
@@ -31,6 +32,11 @@ and no photos or video ever leave your machine.
   teaching (eyes for liner and shadow, cheeks for blush, mouth for lips) and
   glides between them, with the reference photo's matching region pinned
   alongside so you can work close-up, part by part. Toggleable.
+- **Full eye liner** — the upper lash line, the tail past the outer corner
+  where the upper and lower lines meet, and the lower lash line are separate
+  regions with their own tutorial steps, so a look built on lower liner or a
+  soft Korean tail can be taught properly instead of approximated by the
+  upper line alone.
 - **Contour layer** — cheekbone shading, in photo-derived looks and the
   Soft Glam / Smokey Eye presets.
 - **Mirror mode** — hides every panel for a clean, full-bleed mirror. The
