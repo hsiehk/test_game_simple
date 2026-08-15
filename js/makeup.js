@@ -129,12 +129,48 @@ function cheekCenter(landmarks, pair, w, h) {
   return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
 }
 
-// Contour stroke: a segment under the cheekbone running from near the ear
-// toward the mouth corner.
-function contourSegment(landmarks, pair, w, h) {
-  const ear = px(landmarks, pair[0], w, h);
-  const mouth = px(landmarks, pair[1], w, h);
-  return [lerp(ear, mouth, 0.22), lerp(ear, mouth, 0.62)];
+function quadPoint(a, c, b, t) {
+  const u = 1 - t;
+  return {
+    x: u * u * a.x + 2 * u * t * c.x + t * t * b.x,
+    y: u * u * a.y + 2 * u * t * c.y + t * t * b.y,
+  };
+}
+
+/**
+ * Contour as a brush would lay it: a curve following the hollow under the
+ * cheekbone, wide near the ear and tapering forward, expressed as
+ * overlapping soft dabs.
+ *
+ * Softness is built into the geometry rather than delegated to a canvas
+ * blur filter. Not every browser applies ctx.filter — where it is ignored,
+ * a stroked band renders as a hard-edged bar across the cheek — and per
+ * frame a large blur is expensive on phones besides.
+ */
+function contourBrush(lm, pair, cheekPair, w, h) {
+  const ear = px(lm, pair[0], w, h);
+  const mouth = px(lm, pair[1], w, h);
+  const cheek = cheekCenter(lm, cheekPair, w, h);
+  const a = lerp(ear, mouth, 0.2);
+  const b = lerp(ear, mouth, 0.66);
+  const mid = lerp(a, b, 0.5);
+  // Bend the path up toward the cheekbone so it hugs the bone.
+  const ctrl = {
+    x: mid.x + (cheek.x - mid.x) * 0.3,
+    y: mid.y + (cheek.y - mid.y) * 0.5,
+  };
+  const fw = faceWidth(lm, w, h);
+  const dabs = [];
+  const n = 26;
+  for (let i = 0; i < n; i++) {
+    const t = i / (n - 1);
+    dabs.push({
+      p: quadPoint(a, ctrl, b, t),
+      radius: fw * (0.105 - 0.045 * t),
+      weight: Math.sin(Math.PI * t) ** 0.6,
+    });
+  }
+  return { kind: "brush", dabs, pts: dabs.map((d) => d.p) };
 }
 
 /**
@@ -183,8 +219,8 @@ export function regionShapes(lm, layer, w, h) {
       ];
     case "contour":
       return [
-        { kind: "line", pts: contourSegment(lm, LEFT_CONTOUR, w, h), width: fw * 0.09 },
-        { kind: "line", pts: contourSegment(lm, RIGHT_CONTOUR, w, h), width: fw * 0.09 },
+        contourBrush(lm, LEFT_CONTOUR, LEFT_CHEEK, w, h),
+        contourBrush(lm, RIGHT_CONTOUR, RIGHT_CHEEK, w, h),
       ];
     case "lipstick":
       return [{ kind: "poly", pts: toPoints(lm, LIPS_OUTER, w, h) }];
@@ -197,12 +233,20 @@ export function regionShapes(lm, layer, w, h) {
 export function shapesBounds(shapes) {
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (const s of shapes) {
-    const pts = s.kind === "circle"
-      ? [
-          { x: s.center.x - s.r, y: s.center.y - s.r },
-          { x: s.center.x + s.r, y: s.center.y + s.r },
-        ]
-      : s.pts;
+    let pts;
+    if (s.kind === "circle") {
+      pts = [
+        { x: s.center.x - s.r, y: s.center.y - s.r },
+        { x: s.center.x + s.r, y: s.center.y + s.r },
+      ];
+    } else if (s.kind === "brush") {
+      pts = s.dabs.flatMap((d) => [
+        { x: d.p.x - d.radius, y: d.p.y - d.radius },
+        { x: d.p.x + d.radius, y: d.p.y + d.radius },
+      ]);
+    } else {
+      pts = s.pts;
+    }
     for (const p of pts) {
       minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
       minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
@@ -235,7 +279,7 @@ export function traceShape(ctx, shape) {
   if (shape.kind === "circle") {
     ctx.beginPath();
     ctx.arc(shape.center.x, shape.center.y, shape.r, 0, Math.PI * 2);
-  } else if (shape.kind === "line") {
+  } else if (shape.kind === "line" || shape.kind === "brush") {
     polyline(ctx, shape.pts);
   } else {
     polygon(ctx, shape.pts);
@@ -261,7 +305,7 @@ function paintShapes(ctx, shapes, { fill = true } = {}) {
 // Per-layer paint styling on top of the shared geometry.
 const LAYER_STYLE = {
   foundation: { composite: "soft-light", blurScale: 1.5, skinOnly: true },
-  contour: { composite: "multiply", blurScale: 2.8, fadeEnds: true },
+  contour: { composite: "multiply", blurScale: 1.2, brush: true },
   brows: { composite: "multiply", blurScale: 0.6 },
   eyeshadow: { composite: "multiply", blurScale: 1.2, graded: true },
   eyeliner: { composite: "multiply", blurScale: 0.4 },
@@ -277,27 +321,88 @@ const LAYER_STYLE = {
 // is what makes a base layer read as an orange filter instead of skin.
 const FOUNDATION_HOLES = [LEFT_EYE, RIGHT_EYE, LEFT_BROW, RIGHT_BROW, LIPS_OUTER];
 
-function paintLayer(ctx, lm, layer, w, h, { color, alpha, blur }) {
+function paintLayer(ctx, lm, layer, w, h, { color, alpha, blur, blend }, scratch) {
   const style = LAYER_STYLE[layer];
   const shapes = regionShapes(lm, layer, w, h);
   if (!style || shapes.length === 0) return;
 
   ctx.save();
-  ctx.globalCompositeOperation = style.composite;
+  ctx.globalCompositeOperation = blend ?? style.composite;
   ctx.globalAlpha = alpha;
   ctx.filter = `blur(${blur * style.blurScale}px)`;
 
-  if (style.skinOnly) {
-    // Face oval with the features punched out (evenodd).
-    ctx.fillStyle = color;
-    polygon(ctx, shapes[0].pts);
-    for (const hole of FOUNDATION_HOLES) {
-      const pts = toPoints(lm, hole, w, h);
-      ctx.moveTo(pts[0].x, pts[0].y);
-      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
-      ctx.closePath();
+  if (style.brush) {
+    // Dabs are laid into a scratch layer first: painted straight onto the
+    // frame, each overlap would multiply again and build a dark core.
+    // Merged in a layer, they read as one soft deposit composited once.
+    const sc = scratch?.ctx;
+    if (sc) {
+      sc.setTransform(1, 0, 0, 1, 0, 0);
+      sc.clearRect(0, 0, w, h);
+      sc.globalCompositeOperation = "source-over";
+      sc.filter = "none";
+      for (const s of shapes) {
+        for (const d of s.dabs) {
+          const g = sc.createRadialGradient(d.p.x, d.p.y, 0, d.p.x, d.p.y, d.radius);
+          g.addColorStop(0, color);
+          g.addColorStop(0.45, `${color}96`);
+          g.addColorStop(0.75, `${color}33`);
+          g.addColorStop(1, `${color}00`);
+          sc.globalAlpha = 0.055 * d.weight;
+          sc.fillStyle = g;
+          sc.beginPath();
+          sc.arc(d.p.x, d.p.y, d.radius, 0, Math.PI * 2);
+          sc.fill();
+        }
+      }
+      ctx.globalAlpha = alpha;
+      ctx.drawImage(scratch.canvas, 0, 0);
     }
-    ctx.fill("evenodd");
+  } else if (style.skinOnly) {
+    // Feathered face oval: nested inset copies of the real outline, each at
+    // low opacity, ramp coverage up from nothing at the edge. A radial
+    // gradient cannot reach zero along a non-circular boundary, so the base
+    // used to end on a visible face-shaped line down each side.
+    const sc = scratch?.ctx;
+    if (!sc) return;
+    const pts = shapes[0].pts;
+    const cx = pts.reduce((a, p) => a + p.x, 0) / pts.length;
+    const cy = pts.reduce((a, p) => a + p.y, 0) / pts.length;
+    sc.setTransform(1, 0, 0, 1, 0, 0);
+    sc.clearRect(0, 0, w, h);
+    sc.globalCompositeOperation = "source-over";
+    sc.filter = "none";
+    sc.fillStyle = color;
+    const rings = 12;
+    for (let k = 0; k < rings; k++) {
+      const shrink = 1 - (k / (rings - 1)) * 0.16;
+      sc.globalAlpha = 0.16;
+      polygon(sc, pts.map((p) => ({
+        x: cx + (p.x - cx) * shrink,
+        y: cy + (p.y - cy) * shrink,
+      })));
+      sc.fill();
+    }
+    // Keep the base off the features it would otherwise tint, easing the
+    // cutout outward so the eyes and lips are not ringed by a sharp line.
+    sc.globalCompositeOperation = "destination-out";
+    for (const hole of FOUNDATION_HOLES) {
+      const hp = toPoints(lm, hole, w, h);
+      const hx = hp.reduce((a, q) => a + q.x, 0) / hp.length;
+      const hy = hp.reduce((a, q) => a + q.y, 0) / hp.length;
+      for (let k = 6; k >= 0; k--) {
+        const grow = 1 + (k / 6) * 0.35;
+        sc.globalAlpha = k === 0 ? 1 : 0.3;
+        polygon(sc, hp.map((q) => ({
+          x: hx + (q.x - hx) * grow,
+          y: hy + (q.y - hy) * grow,
+        })));
+        sc.fill();
+      }
+    }
+    sc.globalAlpha = 1;
+    ctx.globalAlpha = alpha;
+    ctx.drawImage(scratch.canvas, 0, 0);
   } else if (style.graded) {
     // Densest at the lash line, fading out toward the brow.
     for (const s of shapes) {
@@ -365,6 +470,19 @@ export class MakeupRenderer {
     this.ctx = canvas.getContext("2d");
     // Current (smoothed) camera; null until the first frame sizes it.
     this.view = null;
+    this.scratchLayer = null;
+  }
+
+  // Reusable offscreen layer for brush-composited products.
+  #scratch(w, h) {
+    if (!this.scratchLayer || this.scratchLayer.canvas.width !== w
+        || this.scratchLayer.canvas.height !== h) {
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      this.scratchLayer = { canvas, ctx: canvas.getContext("2d") };
+    }
+    return this.scratchLayer;
   }
 
   /** Ease the live view toward the step's target region. */
@@ -424,7 +542,8 @@ export class MakeupRenderer {
         if (options.enabledLayers && !options.enabledLayers.has(layer)) continue;
         const alpha = cfg.amount * options.intensity;
         if (alpha <= 0.01) continue;
-        paintLayer(ctx, landmarks, layer, w, h, { color: cfg.color, alpha, blur });
+        paintLayer(ctx, landmarks, layer, w, h,
+          { color: cfg.color, alpha, blur, blend: cfg.blend }, this.#scratch(w, h));
       }
 
       // Restore untinted eyes on top of shadow/liner.

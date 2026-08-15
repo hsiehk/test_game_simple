@@ -11,6 +11,7 @@
 // needs a canvas/DOM is below.
 
 import { regionShapes, traceShape, shapesBounds } from "./makeup.js";
+import { LIPS_INNER } from "./landmarks.js";
 import { LAYER_ORDER } from "./looks.js";
 
 // ---------- pure helpers (no DOM) ----------
@@ -40,11 +41,22 @@ export function amountFromTint(tint, { floor = 0.15, cap = 0.8 } = {}) {
   return Math.max(floor, Math.min(cap, dist * 1.6));
 }
 
+/**
+ * How opaquely to lay a matched lip color down. A strongly colored
+ * reference lip should read clearly; a barely-there nude should stay sheer.
+ */
+export function lipStrength({ r, g, b }) {
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const chroma = max === 0 ? 0 : (max - min) / max;
+  return Math.max(0.55, Math.min(0.95, 0.55 + chroma * 1.1));
+}
+
 // Per-layer application strength caps (a lip color can go bolder than a
 // full-face contour without looking painted on).
 const LAYER_CAPS = {
   foundation: { floor: 0.2, cap: 0.4 },
-  contour: { floor: 0.08, cap: 0.3 },
+  contour: { floor: 0.12, cap: 0.5 },
   brows: { floor: 0.15, cap: 0.6 },
   eyeshadow: { floor: 0.15, cap: 0.7 },
   eyeliner: { floor: 0.2, cap: 0.8 },
@@ -125,10 +137,16 @@ function makeCanvas(w, h) {
 }
 
 /**
- * Average color of the image pixels covered by a layer's region shapes.
- * Shapes are rasterized into an alpha mask; pixels with mask alpha > 0 count.
+ * Representative color of the image pixels covered by a layer's region.
+ *
+ * The median is taken rather than the mean: a lip region catches teeth,
+ * gloss highlights and inner-mouth shadow, and averaging those in drags the
+ * result toward a washed-out pink that matches nothing. The median ignores
+ * a minority of extreme pixels entirely.
+ *
+ * `hole` punches a region out of the mask (the mouth opening, for lips).
  */
-function sampleLayer(imageData, lm, layer, w, h) {
+function sampleLayer(imageData, lm, layer, w, h, { hole } = {}) {
   const mask = makeCanvas(w, h);
   const mctx = mask.getContext("2d");
   mctx.fillStyle = mctx.strokeStyle = "#fff";
@@ -138,23 +156,44 @@ function sampleLayer(imageData, lm, layer, w, h) {
       mctx.lineCap = "round";
       mctx.lineWidth = s.width;
       mctx.stroke();
+    } else if (s.kind === "brush") {
+      for (const d of s.dabs) {
+        mctx.beginPath();
+        mctx.arc(d.p.x, d.p.y, d.radius * 0.7, 0, Math.PI * 2);
+        mctx.fill();
+      }
     } else {
       mctx.fill();
     }
   }
+  if (hole) {
+    mctx.save();
+    mctx.globalCompositeOperation = "destination-out";
+    mctx.fillStyle = "#fff";
+    const pts = hole.map((i) => ({ x: lm[i].x * w, y: lm[i].y * h }));
+    mctx.beginPath();
+    mctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) mctx.lineTo(pts[i].x, pts[i].y);
+    mctx.closePath();
+    mctx.fill();
+    mctx.restore();
+  }
   const m = mctx.getImageData(0, 0, w, h).data;
   const img = imageData.data;
-  let r = 0, g = 0, b = 0, n = 0;
+  const rs = [], gs = [], bs = [];
   for (let i = 3; i < m.length; i += 4) {
     if (m[i] > 0) {
-      r += img[i - 3];
-      g += img[i - 2];
-      b += img[i - 1];
-      n++;
+      rs.push(img[i - 3]);
+      gs.push(img[i - 2]);
+      bs.push(img[i - 1]);
     }
   }
-  if (n === 0) return null;
-  return { r: r / n, g: g / n, b: b / n };
+  if (rs.length === 0) return null;
+  const mid = (arr) => {
+    arr.sort((a, b) => a - b);
+    return arr[arr.length >> 1];
+  };
+  return { r: mid(rs), g: mid(gs), b: mid(bs) };
 }
 
 /**
@@ -173,11 +212,22 @@ export function buildPhotoLook(image, landmarks) {
   const skin = sampleLayer(imageData, landmarks, "foundation", w, h);
   const layers = {};
   for (const layer of LAYER_ORDER) {
-    const avg = sampleLayer(imageData, landmarks, layer, w, h);
+    const avg = sampleLayer(imageData, landmarks, layer, w, h,
+      layer === "lipstick" ? { hole: LIPS_INNER } : undefined);
     if (!avg || !skin) continue;
     if (layer === "foundation") {
       // Foundation paints the photo's own skin tone as a soft-light wash.
       layers.foundation = { color: rgbToHex(skin), amount: LAYER_CAPS.foundation.cap };
+    } else if (layer === "lipstick") {
+      // Lips carry the reference's actual color rather than a tint relative
+      // to its skin: a multiply tint clips at white, so a vivid red comes
+      // out muddy. The "color" blend transfers hue and saturation while
+      // keeping the wearer's own lip shading and highlights.
+      layers.lipstick = {
+        color: rgbToHex(avg),
+        amount: lipStrength(avg),
+        blend: "color",
+      };
     } else {
       const tint = tintFromAverages(avg, skin);
       layers[layer] = {
