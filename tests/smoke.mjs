@@ -141,57 +141,115 @@ if (process.env.SMOKE_FACE_IMAGE) {
     await page.click("#next-step");
     check("photo tutorial advances", (await page.locator("#step-counter").textContent()).includes("Step 2"));
 
-    // Blending guard: painted on flat gray, every layer must dissolve into
-    // the skin. A hard-edged stroke shows up as a large jump between
-    // neighbouring pixels; blended shading only ever steps gradually.
-    const edges = await page.evaluate(async () => {
+    // Filter-independence guard. Every layer's softness must come from its
+    // geometry, not from ctx.filter blur: browsers that ignore the filter
+    // are exactly where a stroked contour shipped as two hard bars across
+    // the cheeks. Rendering each layer with the filter available and with
+    // it neutered must produce nearly the same image.
+    // Calibrated on the regression: the old stroked contour differed by
+    // 44/255 between the two, the brush-built one by 16.
+    const filterDep = await page.evaluate(async () => {
       const { MakeupRenderer } = await import("./js/makeup.js");
       const lm = window.__app.state.photoLandmarks;
-      // Full-strength synthetic look: photo-derived tints are relative to the
-      // reference face's own skin (a bare reference yields no-op colors), and
-      // preset strengths are too sheer to measure against. Painting at
-      // amount 1 makes the tone depth large so a band is unmistakable.
-      const look = { layers: { contour: { color: "#8a5a3c", amount: 1 } }, steps: [] };
+      const proto = CanvasRenderingContext2D.prototype;
+      const real = Object.getOwnPropertyDescriptor(proto, "filter");
       const W = 900, H = 700;
-      const flat = document.createElement("canvas");
-      flat.width = W; flat.height = H;
-      const fx = flat.getContext("2d");
-      fx.fillStyle = "#808080";
-      fx.fillRect(0, 0, W, H);
-      const source = await createImageBitmap(flat);
 
-      const worst = {};
-      // Contour only. This metric catches a stroke that stops dead (the
-      // reported artifact: 19/255 before the fix, 3 after), but it cannot
-      // grade a radial wash — a smooth gradient's steepest point scores
-      // higher than a banded one — so asserting on blush would be noise.
-      for (const layer of ["contour"]) {
+      const render = (layer, color, noFilter) => {
+        if (noFilter) {
+          Object.defineProperty(proto, "filter", {
+            get() { return "none"; }, set() {}, configurable: true,
+          });
+        }
+        const flat = document.createElement("canvas");
+        flat.width = W; flat.height = H;
+        const fx = flat.getContext("2d");
+        fx.fillStyle = "#808080";
+        fx.fillRect(0, 0, W, H);
         const c = document.createElement("canvas");
         c.width = W; c.height = H;
-        const r = new MakeupRenderer(c);
-        r.render(source, lm, look, {
+        new MakeupRenderer(c).render(flat, lm, { layers: { [layer]: { color, amount: 1 } }, steps: [] }, {
           intensity: 1, enabledLayers: new Set([layer]), highlightLayer: null,
           zoomLayer: null, compare: false, time: 0,
         });
-        const d = c.getContext("2d").getImageData(0, 0, W, H).data;
-        // Rate of change across a short span. Per-pixel deltas stay tiny even
-        // for a visible band (blur smooths locally); what reads as "not
-        // blended" is the tone shifting sharply over a short distance.
-        const SPAN = 12;
-        let maxStep = 0;
-        for (let y = 0; y < H; y += 2) {
-          for (let x = SPAN; x < W; x++) {
-            const i = (y * W + x) * 4;
-            maxStep = Math.max(maxStep, Math.abs(d[i] - d[i - SPAN * 4]));
-          }
-        }
-        worst[layer] = maxStep;
+        Object.defineProperty(proto, "filter", real);
+        return c.getContext("2d").getImageData(0, 0, W, H).data;
+      };
+
+      const out = {};
+      for (const [layer, color] of [
+        ["contour", "#8a5a3c"], ["foundation", "#c98a5e"], ["blush", "#c05a48"],
+      ]) {
+        const a = render(layer, color, false);
+        const b = render(layer, color, true);
+        let max = 0;
+        for (let i = 0; i < a.length; i += 4) max = Math.max(max, Math.abs(a[i] - b[i]));
+        out[layer] = max;
       }
-      return worst;
+      return out;
     });
-    for (const [layer, step] of Object.entries(edges)) {
-      check(`${layer} blends without a hard edge (max step ${step}/255 over 12px)`, step <= 10);
+    for (const [layer, d] of Object.entries(filterDep)) {
+      check(`${layer} renders the same without canvas blur (off by ${d}/255)`, d <= 25);
     }
+
+    // Colour accuracy: build a reference photo whose lips are a known
+    // colour, with bright teeth showing through the mouth, then check the
+    // analyser recovers the lipstick rather than a pink averaged with teeth.
+    const colour = await page.evaluate(async () => {
+      const { buildPhotoLook } = await import("./js/photolook.js");
+      const { regionShapes } = await import("./js/makeup.js");
+      const { LIPS_INNER } = await import("./js/landmarks.js");
+      const img = window.__app.state.photoImage;
+      const lm = window.__app.state.photoLandmarks;
+      const W = img.width, H = img.height;
+
+      const c = document.createElement("canvas");
+      c.width = W; c.height = H;
+      const x = c.getContext("2d");
+      x.drawImage(img, 0, 0);
+      const TARGET = { r: 0xc2, g: 0x21, b: 0x3a };
+      x.fillStyle = "#c2213a";
+      for (const s of regionShapes(lm, "lipstick", W, H)) {
+        x.beginPath();
+        x.moveTo(s.pts[0].x, s.pts[0].y);
+        for (const p of s.pts.slice(1)) x.lineTo(p.x, p.y);
+        x.closePath();
+        x.fill();
+      }
+      // Teeth: a bright block inside the mouth, the classic sampling trap.
+      x.fillStyle = "#fbfbf5";
+      const inner = LIPS_INNER.map((i) => ({ x: lm[i].x * W, y: lm[i].y * H }));
+      x.beginPath();
+      x.moveTo(inner[0].x, inner[0].y);
+      for (const p of inner.slice(1)) x.lineTo(p.x, p.y);
+      x.closePath();
+      x.fill();
+
+      const painted = await createImageBitmap(c);
+      const look = buildPhotoLook(painted, lm);
+      const hex = look.layers.lipstick.color;
+      const got = {
+        r: parseInt(hex.slice(1, 3), 16),
+        g: parseInt(hex.slice(3, 5), 16),
+        b: parseInt(hex.slice(5, 7), 16),
+      };
+      return {
+        hex,
+        blend: look.layers.lipstick.blend,
+        amount: look.layers.lipstick.amount,
+        err: Math.max(
+          Math.abs(got.r - TARGET.r),
+          Math.abs(got.g - TARGET.g),
+          Math.abs(got.b - TARGET.b),
+        ),
+      };
+    });
+    check(`matched lip colour is accurate (${colour.hex}, off by ${colour.err}/255)`,
+      colour.err <= 12);
+    check("matched lip uses the colour blend so hue survives",
+      colour.blend === "color");
+    check("a saturated reference lip is applied strongly",
+      colour.amount >= 0.7);
 
     // Reference inset (visible even in mirror mode) is drawn.
     check("reference inset visible", await page.locator("#ref-inset-wrap").isVisible());

@@ -73,7 +73,7 @@ export const LOOKS = [
     description: "Warm shimmery lids, sculpted cheeks and a rosy lip — polished but wearable, great for dinners and events.",
     layers: {
       foundation: { color: "#eec3a6", amount: 0.22 },
-      contour: { color: "#b58a70", amount: 0.22 },
+      contour: { color: "#b58a70", amount: 0.4 },
       brows: { color: "#5a4334", amount: 0.4 },
       eyeshadow: { color: "#a9704a", amount: 0.5 },
       eyeliner: { color: "#33251c", amount: 0.6 },
@@ -131,7 +131,7 @@ export const LOOKS = [
     description: "The classic evening look: deep blended shadow and bold liner with a muted lip so the eyes do the talking.",
     layers: {
       foundation: { color: "#ecc0a4", amount: 0.2 },
-      contour: { color: "#a8806a", amount: 0.2 },
+      contour: { color: "#a8806a", amount: 0.36 },
       brows: { color: "#4a3729", amount: 0.45 },
       eyeshadow: { color: "#544c52", amount: 0.62 },
       eyeliner: { color: "#1a171c", amount: 0.75 },
