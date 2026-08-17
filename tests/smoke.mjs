@@ -146,8 +146,8 @@ if (process.env.SMOKE_FACE_IMAGE) {
     // are exactly where a stroked contour shipped as two hard bars across
     // the cheeks. Rendering each layer with the filter available and with
     // it neutered must produce nearly the same image.
-    // Calibrated on the regression: the old stroked contour differed by
-    // 44/255 between the two, the brush-built one by 16.
+    // Calibrated on each regression, filled shape vs brush-built:
+    // contour 44 -> 16, brows 68 -> 10, eyeshadow 73 -> 10.
     const filterDep = await page.evaluate(async () => {
       const { MakeupRenderer } = await import("./js/makeup.js");
       const lm = window.__app.state.photoLandmarks;
@@ -179,6 +179,7 @@ if (process.env.SMOKE_FACE_IMAGE) {
       const out = {};
       for (const [layer, color] of [
         ["contour", "#8a5a3c"], ["foundation", "#c98a5e"], ["blush", "#c05a48"],
+        ["brows", "#4a3729"], ["eyeshadow", "#544c52"],
       ]) {
         const a = render(layer, color, false);
         const b = render(layer, color, true);

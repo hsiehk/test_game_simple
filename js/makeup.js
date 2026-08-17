@@ -78,21 +78,6 @@ function shadowBand(landmarks, lashIdx, browIdx, w, h, reach) {
   return lash.concat(upper);
 }
 
-// Eyeshadow shape plus the axis its color fades along: real shadow is
-// densest at the lash line and diffuses toward the brow, so the band
-// carries gradient endpoints rather than being filled flat.
-function shadowShape(lm, lashIdx, browIdx, w, h) {
-  const reach = 0.55;
-  const pts = shadowBand(lm, lashIdx, browIdx, w, h, reach);
-  const n = lashIdx.length;
-  const mid = Math.floor(n / 2);
-  return {
-    kind: "poly",
-    pts,
-    grad: { from: pts[mid], to: pts[pts.length - 1 - mid] },
-  };
-}
-
 // The tail past the outer corner: continues the lash line's own exit
 // direction so it follows each eye's natural angle. The lash line curves
 // downward as it leaves the corner, so a lift is applied to bring the tail
@@ -174,6 +159,72 @@ function contourBrush(lm, pair, cheekPair, w, h) {
 }
 
 /**
+ * Brows as pencil strokes rather than a filled outline: dabs walk the
+ * centre line between the brow's upper and lower edges, sized to the brow's
+ * own thickness at that point, thinning toward the tail and softest at the
+ * head — filled-in brows that start sharply at the inner edge are the
+ * giveaway of drawn-on brows.
+ */
+function browBrush(lm, browIdx, w, h) {
+  const half = browIdx.length / 2;
+  const upper = toPoints(lm, browIdx.slice(0, half), w, h);
+  // The loop's second half runs back the other way; reverse to pair it up.
+  const lower = toPoints(lm, browIdx.slice(half), w, h).reverse();
+  const dabs = [];
+  const steps = 22;
+  for (let s = 0; s < steps; s++) {
+    const t = s / (steps - 1);
+    const f = t * (upper.length - 1);
+    const i = Math.min(upper.length - 2, Math.floor(f));
+    const k = f - i;
+    const u = lerp(upper[i], upper[i + 1], k);
+    const l = lerp(lower[i], lower[i + 1], k);
+    const centre = lerp(u, l, 0.5);
+    const thickness = Math.hypot(u.x - l.x, u.y - l.y);
+    dabs.push({
+      p: centre,
+      radius: Math.max(2, thickness * 0.62),
+      // Index 0 is the outer tail; soften both ends, most at the head.
+      weight: Math.sin(Math.PI * (0.1 + 0.9 * t)) ** 0.5,
+    });
+  }
+  return { kind: "brush", dabs, pts: toPoints(lm, browIdx, w, h), closed: true };
+}
+
+/**
+ * Eyeshadow as a diffuse wash: dabs spread across the lid, densest along
+ * the lash line and thinning toward the brow and the inner corner, so the
+ * colour has no boundary of its own. The lower edge needs no softening —
+ * the eye opening is repainted over it.
+ */
+function shadowBrush(lm, lashIdx, browIdx, w, h) {
+  const lash = toPoints(lm, lashIdx, w, h);
+  const brow = toPoints(lm, browIdx, w, h);
+  const fw = faceWidth(lm, w, h);
+  const dabs = [];
+  const heights = 6;
+  for (let i = 0; i < lash.length; i++) {
+    const u = i / (lash.length - 1); // 0 outer corner, 1 inner corner
+    for (let j = 0; j < heights; j++) {
+      const t = 0.08 + (j / (heights - 1)) * 0.62;
+      dabs.push({
+        p: lerp(lash[i], brow[i], t),
+        radius: fw * 0.05,
+        // Fades upward toward the brow and inward toward the nose, and
+        // eases off just past the outer corner.
+        weight: (1 - t / 0.78) ** 1.15 * Math.max(0.12, Math.sin(Math.PI * (0.16 + 0.78 * u))),
+      });
+    }
+  }
+  return {
+    kind: "brush",
+    dabs,
+    pts: shadowBand(lm, lashIdx, browIdx, w, h, 0.55),
+    closed: true,
+  };
+}
+
+/**
  * Geometry of every paintable/traceable region, in canvas pixels.
  * Returns an array of shapes:
  *   { kind: "poly",   pts }             closed filled/outlined polygon
@@ -189,13 +240,13 @@ export function regionShapes(lm, layer, w, h) {
       return [{ kind: "poly", pts: toPoints(lm, FACE_OVAL, w, h) }];
     case "brows":
       return [
-        { kind: "poly", pts: toPoints(lm, LEFT_BROW, w, h) },
-        { kind: "poly", pts: toPoints(lm, RIGHT_BROW, w, h) },
+        browBrush(lm, LEFT_BROW, w, h),
+        browBrush(lm, RIGHT_BROW, w, h),
       ];
     case "eyeshadow":
       return [
-        shadowShape(lm, LEFT_LASH, LEFT_LASH_BROW, w, h),
-        shadowShape(lm, RIGHT_LASH, RIGHT_LASH_BROW, w, h),
+        shadowBrush(lm, LEFT_LASH, LEFT_LASH_BROW, w, h),
+        shadowBrush(lm, RIGHT_LASH, RIGHT_LASH_BROW, w, h),
       ];
     case "eyeliner":
       return [
@@ -239,6 +290,8 @@ export function shapesBounds(shapes) {
         { x: s.center.x - s.r, y: s.center.y - s.r },
         { x: s.center.x + s.r, y: s.center.y + s.r },
       ];
+    } else if (s.kind === "brush" && s.closed) {
+      pts = s.pts;
     } else if (s.kind === "brush") {
       pts = s.dabs.flatMap((d) => [
         { x: d.p.x - d.radius, y: d.p.y - d.radius },
@@ -279,6 +332,8 @@ export function traceShape(ctx, shape) {
   if (shape.kind === "circle") {
     ctx.beginPath();
     ctx.arc(shape.center.x, shape.center.y, shape.r, 0, Math.PI * 2);
+  } else if (shape.kind === "brush" && shape.closed) {
+    polygon(ctx, shape.pts);
   } else if (shape.kind === "line" || shape.kind === "brush") {
     polyline(ctx, shape.pts);
   } else {
@@ -305,9 +360,9 @@ function paintShapes(ctx, shapes, { fill = true } = {}) {
 // Per-layer paint styling on top of the shared geometry.
 const LAYER_STYLE = {
   foundation: { composite: "soft-light", blurScale: 1.5, skinOnly: true },
-  contour: { composite: "multiply", blurScale: 1.2, brush: true },
-  brows: { composite: "multiply", blurScale: 0.6 },
-  eyeshadow: { composite: "multiply", blurScale: 1.2, graded: true },
+  contour: { composite: "multiply", blurScale: 1.2, brush: true, dabAlpha: 0.055 },
+  brows: { composite: "multiply", blurScale: 0.5, brush: true, dabAlpha: 0.12 },
+  eyeshadow: { composite: "multiply", blurScale: 0.9, brush: true, dabAlpha: 0.05 },
   eyeliner: { composite: "multiply", blurScale: 0.4 },
   // The tail is drawn from the corner outward, so it tapers to nothing at
   // the tip; the lower line softens at both ends.
@@ -348,7 +403,7 @@ function paintLayer(ctx, lm, layer, w, h, { color, alpha, blur, blend }, scratch
           g.addColorStop(0.45, `${color}96`);
           g.addColorStop(0.75, `${color}33`);
           g.addColorStop(1, `${color}00`);
-          sc.globalAlpha = 0.055 * d.weight;
+          sc.globalAlpha = (style.dabAlpha ?? 0.055) * d.weight;
           sc.fillStyle = g;
           sc.beginPath();
           sc.arc(d.p.x, d.p.y, d.radius, 0, Math.PI * 2);
@@ -403,18 +458,7 @@ function paintLayer(ctx, lm, layer, w, h, { color, alpha, blur, blend }, scratch
     sc.globalAlpha = 1;
     ctx.globalAlpha = alpha;
     ctx.drawImage(scratch.canvas, 0, 0);
-  } else if (style.graded) {
-    // Densest at the lash line, fading out toward the brow.
-    for (const s of shapes) {
-      const g = ctx.createLinearGradient(s.grad.from.x, s.grad.from.y, s.grad.to.x, s.grad.to.y);
-      g.addColorStop(0, color);
-      g.addColorStop(0.55, `${color}b0`);
-      g.addColorStop(1, `${color}00`);
-      ctx.fillStyle = g;
-      traceShape(ctx, s);
-      ctx.fill();
-    }
-  } else if (style.carveMouth) {
+    } else if (style.carveMouth) {
     // Fill the outer lip loop with the mouth opening carved out (evenodd).
     ctx.fillStyle = color;
     const outer = shapes[0].pts;
