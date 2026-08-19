@@ -7,6 +7,7 @@ import {
   LEFT_LOWER_LASH, RIGHT_LOWER_LASH,
   LEFT_LASH_BROW, RIGHT_LASH_BROW,
   LEFT_CHEEK, RIGHT_CHEEK, LEFT_CONTOUR, RIGHT_CONTOUR,
+  LEFT_IRIS, RIGHT_IRIS,
   FACE_WIDTH_REF, FACE_OVAL,
 } from "./landmarks.js";
 import { LAYER_ORDER } from "./looks.js";
@@ -225,6 +226,114 @@ function shadowBrush(lm, lashIdx, browIdx, w, h) {
 }
 
 /**
+ * Points below the lower lash line, offset along each point's own
+ * upper-to-lower direction so the curve follows the eye's shape rather
+ * than sliding straight down the image.
+ */
+function underEyeOffset(lm, lashIdx, lowerIdx, w, h, drop) {
+  const upper = toPoints(lm, lashIdx, w, h);
+  const lower = toPoints(lm, lowerIdx, w, h);
+  return lower.map((p, i) => {
+    const dx = p.x - upper[i].x;
+    const dy = p.y - upper[i].y;
+    const len = Math.hypot(dx, dy) || 1;
+    const eyeH = Math.max(len, 1);
+    return { x: p.x + (dx / len) * eyeH * drop, y: p.y + (dy / len) * eyeH * drop };
+  });
+}
+
+/**
+ * Aegyo-sal: the ridge of "eye smile" fat right below the lower lashes,
+ * lit rather than shaded. Highlighting it and shading beneath is what
+ * gives the rounded, wide-eyed look in Korean tutorials.
+ */
+function aegyoSalBrush(lm, lashIdx, lowerIdx, w, h) {
+  const lower = toPoints(lm, lowerIdx, w, h);
+  const below = underEyeOffset(lm, lashIdx, lowerIdx, w, h, 0.62);
+  const fw = faceWidth(lm, w, h);
+  const dabs = [];
+  const rows = 3;
+  for (let i = 0; i < lower.length; i++) {
+    // 0 at the outer corner, 1 at the inner: keep it off the very corners.
+    const u = i / (lower.length - 1);
+    const edge = Math.sin(Math.PI * (0.1 + 0.8 * u));
+    for (let j = 0; j < rows; j++) {
+      const t = 0.25 + (j / (rows - 1)) * 0.5;
+      dabs.push({
+        p: lerp(lower[i], below[i], t),
+        radius: fw * 0.028,
+        weight: edge * (1 - Math.abs(t - 0.45) * 1.1),
+      });
+    }
+  }
+  return {
+    kind: "brush",
+    dabs,
+    pts: lower.concat([...below].reverse()),
+    closed: true,
+  };
+}
+
+/** The soft shadow just under the aegyo-sal that gives it its roundness. */
+function underEyeShadeBrush(lm, lashIdx, lowerIdx, w, h) {
+  const line = underEyeOffset(lm, lashIdx, lowerIdx, w, h, 0.95);
+  const fw = faceWidth(lm, w, h);
+  const dabs = line.map((p, i) => {
+    const u = i / (line.length - 1);
+    return {
+      p,
+      radius: fw * 0.022,
+      weight: Math.sin(Math.PI * (0.12 + 0.76 * u)) ** 0.8,
+    };
+  });
+  return { kind: "brush", dabs, pts: line };
+}
+
+/**
+ * Lashes fanned from the upper lash line: each stroke leans outward from
+ * the eye's centre, longest toward the outer corner, tapering to a point.
+ */
+function lashStrokes(lm, lashIdx, eyeIdx, w, h) {
+  const lash = toPoints(lm, lashIdx, w, h);
+  const eye = toPoints(lm, eyeIdx, w, h);
+  const cx = eye.reduce((a, p) => a + p.x, 0) / eye.length;
+  const cy = eye.reduce((a, p) => a + p.y, 0) / eye.length;
+  const eyeW = Math.hypot(lash[0].x - lash[lash.length - 1].x,
+    lash[0].y - lash[lash.length - 1].y);
+  const out = [];
+  for (let i = 1; i < lash.length - 1; i++) {
+    const u = i / (lash.length - 1);
+    const base = lash[i];
+    const dx = base.x - cx;
+    const dy = base.y - cy;
+    const len = Math.hypot(dx, dy) || 1;
+    // Longest at the outer third, shortest at the inner corner.
+    const reach = eyeW * (0.30 - 0.16 * u);
+    const lean = (lash[0].x - cx) / (Math.abs(lash[0].x - cx) || 1);
+    out.push({
+      kind: "line",
+      width: Math.max(1, eyeW * 0.022),
+      pts: [
+        base,
+        {
+          x: base.x + (dx / len) * reach + lean * reach * 0.35,
+          y: base.y + (dy / len) * reach,
+        },
+      ],
+    });
+  }
+  return out;
+}
+
+/** Iris disc, from the refined iris ring. */
+function irisDisc(lm, irisIdx, w, h) {
+  const c = px(lm, irisIdx[0], w, h);
+  const rim = irisIdx.slice(1).map((i) => px(lm, i, w, h));
+  const r = rim.reduce((a, p) => a + Math.hypot(p.x - c.x, p.y - c.y), 0) / rim.length;
+  return { kind: "circle", center: c, r };
+}
+
+/**
  * Geometry of every paintable/traceable region, in canvas pixels.
  * Returns an array of shapes:
  *   { kind: "poly",   pts }             closed filled/outlined polygon
@@ -263,6 +372,23 @@ export function regionShapes(lm, layer, w, h) {
         { kind: "line", pts: lowerLinerPts(lm, LEFT_LOWER_LASH, w, h), width: Math.max(1.2, fw * 0.009) },
         { kind: "line", pts: lowerLinerPts(lm, RIGHT_LOWER_LASH, w, h), width: Math.max(1.2, fw * 0.009) },
       ];
+    case "aegyoSal":
+      return [
+        aegyoSalBrush(lm, LEFT_LASH, LEFT_LOWER_LASH, w, h),
+        aegyoSalBrush(lm, RIGHT_LASH, RIGHT_LOWER_LASH, w, h),
+      ];
+    case "underEyeShade":
+      return [
+        underEyeShadeBrush(lm, LEFT_LASH, LEFT_LOWER_LASH, w, h),
+        underEyeShadeBrush(lm, RIGHT_LASH, RIGHT_LOWER_LASH, w, h),
+      ];
+    case "lashes":
+      return [
+        ...lashStrokes(lm, LEFT_LASH, LEFT_EYE, w, h),
+        ...lashStrokes(lm, RIGHT_LASH, RIGHT_EYE, w, h),
+      ];
+    case "lenses":
+      return [irisDisc(lm, LEFT_IRIS, w, h), irisDisc(lm, RIGHT_IRIS, w, h)];
     case "blush":
       return [
         { kind: "circle", center: cheekCenter(lm, LEFT_CHEEK, w, h), r: fw * 0.16 },
@@ -368,6 +494,12 @@ const LAYER_STYLE = {
   // the tip; the lower line softens at both ends.
   linerWing: { composite: "multiply", blurScale: 0.5, fadeTip: true },
   linerLower: { composite: "multiply", blurScale: 0.7, fadeEnds: true },
+  // Highlight, so it lightens rather than darkens.
+  aegyoSal: { composite: "screen", blurScale: 1.0, brush: true, dabAlpha: 0.05 },
+  underEyeShade: { composite: "multiply", blurScale: 1.0, brush: true, dabAlpha: 0.05 },
+  // Painted after the eye opening is restored, or they would be wiped.
+  lashes: { composite: "multiply", blurScale: 0.3, fadeTip: true, afterEyes: true },
+  lenses: { composite: "color", blurScale: 0.2, radial: true, afterEyes: true },
   blush: { composite: "multiply", blurScale: 1.0, radial: true },
   lipstick: { composite: "multiply", blurScale: 0.5, carveMouth: true },
 };
@@ -580,18 +712,24 @@ export class MakeupRenderer {
       // the user leans in.
       const blur = Math.max(2, fw * 0.03) * view.scale;
 
-      for (const layer of LAYER_ORDER) {
-        const cfg = look.layers[layer];
-        if (!cfg) continue;
-        if (options.enabledLayers && !options.enabledLayers.has(layer)) continue;
-        const alpha = cfg.amount * options.intensity;
-        if (alpha <= 0.01) continue;
-        paintLayer(ctx, landmarks, layer, w, h,
-          { color: cfg.color, alpha, blur, blend: cfg.blend }, this.#scratch(w, h));
-      }
+      const paint = (afterEyes) => {
+        for (const layer of LAYER_ORDER) {
+          const cfg = look.layers[layer];
+          if (!cfg) continue;
+          if (Boolean(LAYER_STYLE[layer]?.afterEyes) !== afterEyes) continue;
+          if (options.enabledLayers && !options.enabledLayers.has(layer)) continue;
+          const alpha = cfg.amount * options.intensity;
+          if (alpha <= 0.01) continue;
+          paintLayer(ctx, landmarks, layer, w, h,
+            { color: cfg.color, alpha, blur, blend: cfg.blend }, this.#scratch(w, h));
+        }
+      };
 
+      paint(false);
       // Restore untinted eyes on top of shadow/liner.
       this.#restoreEyes(source, landmarks, w, h);
+      // Lashes and lenses belong on top of the eye, not under it.
+      paint(true);
 
       // Ghost overlay: the reference photo aligned over the live face
       // (matched by eye midpoint, interocular scale, and eye-line angle).

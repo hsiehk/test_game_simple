@@ -11,7 +11,9 @@
 // needs a canvas/DOM is below.
 
 import { regionShapes, traceShape, shapesBounds } from "./makeup.js";
-import { LIPS_INNER } from "./landmarks.js";
+import {
+  LIPS_INNER, LEFT_IRIS, RIGHT_IRIS, LEFT_LASH, RIGHT_LASH,
+} from "./landmarks.js";
 import { LAYER_ORDER } from "./looks.js";
 
 // ---------- pure helpers (no DOM) ----------
@@ -52,6 +54,70 @@ export function lipStrength({ r, g, b }) {
   return Math.max(0.55, Math.min(0.95, 0.55 + chroma * 1.1));
 }
 
+
+// A bare lash line is already far darker than skin — lashes plus the shadow
+// of the lid see to that — so drama is measured across the range above that
+// baseline, not from zero. Measured on an unmade-up face: 0.69 darker than
+// skin bare, 0.89 with a heavy line painted on.
+const LASH_BASELINE = 0.66;
+const LASH_HEAVY = 0.88;
+
+/**
+ * How dramatic the reference's lashes are, 0..1.
+ *
+ * This measures density, not what produced it: heavy mascara and a strip of
+ * falsies both read high, and nothing here can tell them apart. It also
+ * reads a face lit from below or shot in shadow as darker than it is. The
+ * advice built on this says as much rather than asserting falsies.
+ */
+export function lashDrama(lashColor, skin) {
+  if (!lashColor || !skin) return 0;
+  const lum = (c) => 0.299 * c.r + 0.587 * c.g + 0.114 * c.b;
+  const skinLum = Math.max(lum(skin), 1);
+  const ratio = 1 - lum(lashColor) / skinLum;
+  return Math.max(0, Math.min(1, (ratio - LASH_BASELINE) / (LASH_HEAVY - LASH_BASELINE)));
+}
+
+/**
+ * Iris width as a fraction of eye width. Circle lenses enlarge the visible
+ * iris, so a reference sitting well above the wearer's own ratio is the
+ * signal that lenses — not makeup — are doing the work.
+ */
+export function irisRatio(lm, irisIdx, lashIdx) {
+  const c = lm[irisIdx[0]];
+  const rim = irisIdx.slice(1).map((i) => lm[i]);
+  const r = rim.reduce((a, p) => a + Math.hypot(p.x - c.x, p.y - c.y), 0) / rim.length;
+  const a = lm[lashIdx[0]];
+  const b = lm[lashIdx[lashIdx.length - 1]];
+  const eyeW = Math.hypot(a.x - b.x, a.y - b.y);
+  return eyeW > 0 ? (r * 2) / eyeW : 0;
+}
+
+/**
+ * Compare a reference iris against the wearer's own. Returns what to say
+ * about lenses, or null when there is nothing worth suggesting.
+ * `mine` may be null when the camera has not seen the user's eyes yet.
+ */
+export function lensAdvice(ref, mine) {
+  if (!ref) return null;
+  const lum = (c) => 0.299 * c.r + 0.587 * c.g + 0.114 * c.b;
+  const dist = mine
+    ? Math.hypot(ref.color.r - mine.color.r, ref.color.g - mine.color.g,
+        ref.color.b - mine.color.b)
+    : null;
+  const bigger = mine ? ref.ratio - mine.ratio : 0;
+
+  const enlarged = bigger > 0.05;
+  const recoloured = dist !== null ? dist > 55 : lum(ref.color) > 95;
+  if (!enlarged && !recoloured) return null;
+  return {
+    color: ref.color,
+    enlarged,
+    recoloured,
+    ratio: ref.ratio,
+  };
+}
+
 // Per-layer application strength caps (a lip color can go bolder than a
 // full-face contour without looking painted on).
 const LAYER_CAPS = {
@@ -62,6 +128,9 @@ const LAYER_CAPS = {
   eyeliner: { floor: 0.2, cap: 0.8 },
   linerWing: { floor: 0.15, cap: 0.8 },
   linerLower: { floor: 0.12, cap: 0.7 },
+  aegyoSal: { floor: 0.15, cap: 0.5 },
+  underEyeShade: { floor: 0.1, cap: 0.45 },
+  lashes: { floor: 0.3, cap: 0.9 },
   blush: { floor: 0.15, cap: 0.6 },
   lipstick: { floor: 0.25, cap: 0.85 },
 };
@@ -110,6 +179,24 @@ export const PHOTO_STEPS = [
     title: "Line the lower lash line",
     instruction: "Follow the outlined line under your lower lashes, working from the outer corner inward and stopping around the middle of the eye. Keep it finer than the upper line, and connect it into the tail so the two meet at the corner.",
     tip: "Smudge the lower line with a cotton bud — a crisp line under the eye reads harsh in daylight.",
+  },
+  {
+    layer: "aegyoSal",
+    title: "Light up the aegyo-sal",
+    instruction: "Just under your lower lashes is a small ridge that puffs up when you smile. Press a light shimmer along the outlined band there — pat it on with a fingertip rather than sweeping, so it stays put and catches the light.",
+    tip: "Smile in the mirror first: highlight only the part that actually rises, or it reads as under-eye puffiness.",
+  },
+  {
+    layer: "underEyeShade",
+    title: "Shade below it",
+    instruction: "Draw the faintest line of a cool taupe along the lower outlined curve, just beneath the ridge you highlighted, then blend it until it is barely a shadow. This is what makes the ridge look rounded rather than flat.",
+    tip: "Use a shade cooler and lighter than your contour — warm brown here reads as a dark circle.",
+  },
+  {
+    layer: "lashes",
+    title: "Lashes",
+    instruction: "Curl your lashes hard at the root, then coat from the base upward, wiggling as you go. Concentrate the outer third to pull the eye outward, matching the fan shown on your face.",
+    tip: "Let each coat dry a few seconds before the next, or they clump instead of lengthening.",
   },
   {
     layer: "blush",
@@ -237,13 +324,46 @@ export function buildPhotoLook(image, landmarks) {
     }
   }
 
+  // Lashes: how dark the band sitting on the lash line is, versus skin.
+  const lashBand = sampleLayer(imageData, landmarks, "eyeliner", w, h);
+  const drama = lashDrama(lashBand, skin);
+  if (drama > 0.25) {
+    layers.lashes = {
+      color: rgbToHex(lashBand),
+      amount: Math.min(LAYER_CAPS.lashes.cap, LAYER_CAPS.lashes.floor + drama * 0.6),
+    };
+  }
+
+  // Eyes: iris colour and how wide the iris sits relative to the eye.
+  const iris = sampleLayer(imageData, landmarks, "lenses", w, h);
+  const ratio = (irisRatio(landmarks, LEFT_IRIS, LEFT_LASH)
+    + irisRatio(landmarks, RIGHT_IRIS, RIGHT_LASH)) / 2;
+  const eyes = iris ? { color: iris, ratio } : null;
+
   return {
     id: "photo",
     name: "From your photo",
     description: "Colors and placement sampled from your uploaded reference photo. Follow the tutorial to recreate it — each step zooms the photo into the area being taught.",
     steps: PHOTO_STEPS.filter((s) => layers[s.layer]),
     layers,
+    // Observations the tutorial turns into advice, rather than paint.
+    observed: { lashDrama: drama, eyes },
   };
+}
+
+/**
+ * Read the wearer's own iris from a live frame, so lens advice compares
+ * their eyes against the reference rather than against an assumption.
+ */
+export function readEyes(source, landmarks, w, h) {
+  const canvas = makeCanvas(w, h);
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(source, 0, 0, w, h);
+  const color = sampleLayer(ctx.getImageData(0, 0, w, h), landmarks, "lenses", w, h);
+  if (!color) return null;
+  const ratio = (irisRatio(landmarks, LEFT_IRIS, LEFT_LASH)
+    + irisRatio(landmarks, RIGHT_IRIS, RIGHT_LASH)) / 2;
+  return { color, ratio };
 }
 
 /**

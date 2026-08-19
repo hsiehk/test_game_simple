@@ -33,6 +33,12 @@ export const RIGHT_LASH = [263, 466, 388, 387, 386, 385, 384, 398, 362];
 export const LEFT_LOWER_LASH = [33, 7, 163, 144, 145, 153, 154, 155, 133];
 export const RIGHT_LOWER_LASH = [263, 249, 390, 373, 374, 380, 381, 382, 362];
 
+// Iris ring: centre first, then four rim points. Present because the face
+// landmarker refines irises — this is what makes lens colour and iris size
+// measurable.
+export const LEFT_IRIS = [468, 469, 470, 471, 472];
+export const RIGHT_IRIS = [473, 474, 475, 476, 477];
+
 // For each lash-line point, the brow point roughly above it. The eyeshadow
 // band is built by lerping from the lash line toward these.
 export const LEFT_LASH_BROW = [46, 46, 53, 52, 52, 65, 65, 55, 55];

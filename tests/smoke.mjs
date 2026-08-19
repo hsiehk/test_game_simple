@@ -252,6 +252,60 @@ if (process.env.SMOKE_FACE_IMAGE) {
     check("a saturated reference lip is applied strongly",
       colour.amount >= 0.7);
 
+    // Wearables, end to end: paint a reference with grey irises and a heavy
+    // lash line, and confirm the analyser reports both — and stays quiet on
+    // the untouched original.
+    const wearables = await page.evaluate(async () => {
+      const { buildPhotoLook, lensAdvice } = await import("./js/photolook.js");
+      const { regionShapes } = await import("./js/makeup.js");
+      const img = window.__app.state.photoImage;
+      const lm = window.__app.state.photoLandmarks;
+      const W = img.width, H = img.height;
+
+      const c = document.createElement("canvas");
+      c.width = W; c.height = H;
+      const x = c.getContext("2d");
+      x.drawImage(img, 0, 0);
+      // Heavy lash line.
+      x.strokeStyle = "#141014";
+      x.lineCap = "round";
+      for (const s of regionShapes(lm, "eyeliner", W, H)) {
+        x.lineWidth = s.width * 2.4;
+        x.beginPath();
+        x.moveTo(s.pts[0].x, s.pts[0].y);
+        for (const p of s.pts.slice(1)) x.lineTo(p.x, p.y);
+        x.stroke();
+      }
+      // Grey circle lenses, drawn larger than the natural iris.
+      x.fillStyle = "#93a2ad";
+      for (const s of regionShapes(lm, "lenses", W, H)) {
+        x.beginPath();
+        x.arc(s.center.x, s.center.y, s.r, 0, Math.PI * 2);
+        x.fill();
+      }
+
+      const dressed = buildPhotoLook(await createImageBitmap(c), lm);
+      const bare = buildPhotoLook(img, lm);
+      const mine = { color: { r: 62, g: 44, b: 36 }, ratio: bare.observed.eyes.ratio };
+      return {
+        dressedDrama: dressed.observed.lashDrama,
+        bareDrama: bare.observed.lashDrama,
+        dressedLash: !!dressed.layers.lashes,
+        irisColour: dressed.observed.eyes.color,
+        advice: lensAdvice(dressed.observed.eyes, mine),
+        bareAdvice: lensAdvice(bare.observed.eyes, mine),
+      };
+    });
+    check(`heavy lashes detected (drama ${wearables.dressedDrama.toFixed(2)})`,
+      wearables.dressedDrama > 0.45);
+    check(`bare lashes stay below the advice threshold (${wearables.bareDrama.toFixed(2)})`,
+      wearables.bareDrama < 0.25 && wearables.bareDrama < wearables.dressedDrama);
+    check("a dramatic reference adds a lash layer", wearables.dressedLash);
+    check(`grey lenses detected (iris rgb ${Math.round(wearables.irisColour.r)},${Math.round(wearables.irisColour.g)},${Math.round(wearables.irisColour.b)})`,
+      !!wearables.advice?.recoloured);
+    check("no lens advice for eyes matching the wearer's own",
+      wearables.bareAdvice === null);
+
     // Reference inset (visible even in mirror mode) is drawn.
     check("reference inset visible", await page.locator("#ref-inset-wrap").isVisible());
     check("reference inset has pixels", await page.evaluate(() => {
