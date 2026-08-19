@@ -1,4 +1,4 @@
-import { LOOKS, getLook, LAYER_ORDER } from "./looks.js";
+import { LOOKS, getLook, LAYER_ORDER, BLUSH_STYLES } from "./looks.js";
 import { MakeupRenderer } from "./makeup.js";
 import {
   buildPhotoLook, drawReferenceCrop, readEyes, lensAdvice,
@@ -40,6 +40,8 @@ const els = {
   zoomBtn: document.getElementById("zoom-btn"),
   advicePanel: document.getElementById("advice-panel"),
   adviceList: document.getElementById("advice-list"),
+  blushRow: document.getElementById("blush-row"),
+  blushHint: document.getElementById("blush-hint"),
   prevBtn: document.getElementById("prev-step"),
   nextBtn: document.getElementById("next-step"),
   sendPhoneBtn: document.getElementById("send-phone-btn"),
@@ -70,6 +72,7 @@ const state = {
   ghostOpacity: 0.55,
   zoomToStep: true,
   myEyes: null,
+  blushStyle: null,
   advice: [],
 };
 
@@ -111,10 +114,42 @@ function refreshLookButtons() {
   els.lookDescription.textContent = state.look.description;
 }
 
+function blushStyleFor() {
+  return state.blushStyle ?? state.look.blushStyle ?? "apples";
+}
+
+function buildBlushRow() {
+  els.blushRow.textContent = "";
+  for (const style of BLUSH_STYLES) {
+    const btn = document.createElement("button");
+    btn.className = "look-btn blush-btn";
+    btn.textContent = style.name;
+    btn.dataset.blushId = style.id;
+    btn.addEventListener("click", () => {
+      state.blushStyle = style.id;
+      refreshBlushRow();
+    });
+    els.blushRow.appendChild(btn);
+  }
+  refreshBlushRow();
+}
+
+function refreshBlushRow() {
+  const active = blushStyleFor();
+  for (const btn of els.blushRow.querySelectorAll(".blush-btn")) {
+    btn.classList.toggle("active", btn.dataset.blushId === active);
+  }
+  els.blushHint.textContent =
+    BLUSH_STYLES.find((b) => b.id === active)?.hint ?? "";
+}
+
 function selectLook(id) {
   state.look = id === "photo" && state.photoLook ? state.photoLook : getLook(id);
   state.stepIndex = 0;
+  // A look carries its own placement; picking a new look adopts it.
+  state.blushStyle = null;
   refreshLookButtons();
+  refreshBlushRow();
   refreshTutorial();
 }
 
@@ -154,7 +189,8 @@ function refreshTutorial() {
   els.refInsetWrap.classList.toggle("hidden", !showReference);
   if (showReference) {
     for (const canvas of [els.referenceCanvas, els.refInset]) {
-      drawReferenceCrop(canvas, state.photoImage, state.photoLandmarks, step.layer);
+      drawReferenceCrop(canvas, state.photoImage, state.photoLandmarks,
+        step.layer, blushStyleFor());
     }
   }
 }
@@ -554,6 +590,7 @@ function frameLoop(time) {
     intensity: state.intensity,
     enabledLayers,
     highlightLayer: step?.layer ?? null,
+    blushStyle: blushStyleFor(),
     zoomLayer: state.zoomToStep && step ? step.layer : null,
     compare: state.compare,
     ghost,
@@ -610,6 +647,7 @@ async function init() {
     return;
   }
   buildLookButtons();
+  buildBlushRow();
   bindControls();
   refreshZoomBtn();
   refreshTutorial();

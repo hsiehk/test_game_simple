@@ -13,18 +13,19 @@ and no photos or video ever leave your machine.
 - **Live AR try-on** — real-time 478-point face tracking (MediaPipe Face
   Landmarker) drives virtual foundation, brows, eyeshadow, eyeliner, blush and
   lipstick that follow your face.
-- **Preset looks** — Natural/Everyday, Soft Glam, Smokey Eye, Puppy Liner
-  (K-beauty), Bold Lip, with
-  palettes drawn from editorial conventions (sheer skin, taupe and bronze
-  lids, graphite smoke, blue-red lip) rather than saturated filter colors.
-- **Tutorial mode** — the heart of the app. Each look has 6 written steps with
-  pro tips; the current step's region (lip line, crease, apples of the cheeks…)
+- **Preset looks** — Natural/Everyday, Soft Glam, Smokey Eye, Korean Everyday
+  Eye and Bold Lip, with palettes drawn from editorial conventions (sheer
+  skin, taupe and bronze lids, graphite smoke, blue-red lip) rather than
+  saturated filter colors.
+- **Tutorial mode** — the heart of the app. Each look has written steps with
+  pro tips (six for the simplest, fifteen for the Korean eye); the current step's region (lip line, crease, apples of the cheeks…)
   is outlined on your face with an animated dashed highlight, and the virtual
   makeup builds up step by step as you advance.
 - **Learn from a photo** — upload any makeup photo (an Instagram look, a
   celebrity, a friend). The same face mesh is detected on the photo, each
   product's color is sampled from its region and expressed as a tint relative
-  to the photo's skin tone, and a 7-step tutorial is generated. Each step
+  to the photo's skin tone, and a tutorial is generated from the steps that
+  photo actually calls for. Each step
   zooms the reference photo into the area being taught (liner, crease,
   contour…) with the trace shape outlined there — and the matching shape is
   outlined on your own face to follow.
@@ -32,21 +33,21 @@ and no photos or video ever leave your machine.
   teaching (eyes for liner and shadow, cheeks for blush, mouth for lips) and
   glides between them, with the reference photo's matching region pinned
   alongside so you can work close-up, part by part. Toggleable.
-- **The whole eye** — beyond liner and shadow: the aegyo-sal (the ridge
-  under the lower lashes) is highlighted and shaded beneath to round the eye
-  out, lashes are fanned from the lash line, and coloured lenses are rendered
-  on the iris itself.
-- **Wearables, detected not painted** — an uploaded reference is measured for
-  things makeup cannot do. A lash line far denser than bare lashes is
-  reported (falsies or layered mascara — a photo cannot tell those apart, and
-  the advice says so), and the iris is compared against the wearer's own for
-  both colour and size, since circle lenses enlarge it. Suggestions appear
-  alongside the tutorial rather than as steps to paint.
-- **Full eye liner** — the upper lash line, the tail past the outer corner
-  where the upper and lower lines meet, and the lower lash line are separate
-  regions with their own tutorial steps, so a look built on lower liner or a
-  soft Korean tail can be taught properly instead of approximated by the
-  upper line alone.
+- **The whole eye, taught in order** — lid wash, lower-lid colour (下眼皮铺色),
+  outer-corner depth (眼尾), upper liner, tail, lower liner, inner-corner
+  shimmer (眼头), aegyo-sal highlight (卧蚕) and the shading beneath it, then
+  upper and lower lashes. Each is its own region with its own step, following
+  the sequence Korean and Chinese tutorials actually teach.
+- **Six blush placements** — apples, draping, eye-enlarging, rabbit, high
+  cheekbones and sunkissed. Where blush sits changes the face more than which
+  pink it is, so each look picks one and you can try the rest.
+- **Reads what is not makeup** — an uploaded reference is measured for things
+  makeup cannot do. A lash line far denser than bare lashes is reported
+  (falsies or layered mascara — a photo cannot tell those apart, and the
+  advice says so), and the iris is compared against the wearer's own for both
+  colour and size, since circle lenses enlarge it. These appear as notes
+  beside the tutorial rather than as steps to paint. Coloured lenses can also
+  be rendered on the iris itself.
 - **Contour layer** — cheekbone shading, in photo-derived looks and the
   Soft Glam / Smokey Eye presets.
 - **Mirror mode** — hides every panel for a clean, full-bleed mirror. The
@@ -56,10 +57,11 @@ and no photos or video ever leave your machine.
 - **Hold-to-ghost** — press and hold the mirror to overlay your reference
   photo, aligned to your face by eye position, scale and tilt. Drag left or
   right while holding to fade it up or down.
-- **Send instructions to your phone** — the whole tutorial is compressed into
-  a QR code; scan it and your phone shows the written steps (with each step's
-  sampled color) while the big screen stays a clean mirror. No server, no
-  upload — the tutorial travels inside the QR itself.
+- **Send instructions to your phone** — a QR code carries the tutorial to your
+  phone, which shows the written steps (with each step's sampled color) while
+  the big screen stays a clean mirror. No server and no upload: the phone runs
+  this same app, so the code carries only which look — or which layers and
+  colors a photo produced — and the phone rebuilds the rest.
 - **Intensity slider**, **hold-to-compare** (see your bare face), and
   **photo capture**.
 

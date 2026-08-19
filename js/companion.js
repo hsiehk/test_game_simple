@@ -4,21 +4,54 @@
 // app, seeing the fragment, renders instruction cards instead of the mirror.
 // Nothing is uploaded anywhere; the data travels inside the QR itself.
 
+import { LOOKS } from "./looks.js";
+import { PHOTO_STEPS } from "./photolook.js";
+
 export const COMPANION_HASH_PREFIX = "#companion=";
 
-/** Minimal wire form of a look's tutorial. */
+/**
+ * Wire form of a look's tutorial.
+ *
+ * The phone opens this same app, so it already holds every word of the
+ * step text. Only what the phone cannot know travels in the code: which
+ * look, or — for a look built from a photo — which steps survived sampling
+ * and what colour each came out. Sending the prose instead pushed a
+ * sixteen-step tutorial to 2907 bytes against a 2953-byte ceiling, one
+ * step away from producing no QR code at all.
+ */
 export function packSteps(look) {
+  const preset = LOOKS.find((l) => l.id === look.id);
+  if (preset) return { v: 2, look: preset.id };
   return {
-    v: 1,
+    v: 2,
     name: look.name,
-    steps: look.steps.map((s) => ({
-      l: s.layer,
-      t: s.title,
-      i: s.instruction,
-      p: s.tip,
-      c: look.layers[s.layer]?.color ?? null,
-    })),
+    photo: look.steps.map((s) => [s.layer, look.layers[s.layer]?.color ?? null]),
   };
+}
+
+/** Rebuild the full tutorial from a decoded payload. */
+export function unpackSteps(data) {
+  if (data?.v === 1) return data; // links made before the payload shrank
+  if (data?.look) {
+    const look = LOOKS.find((l) => l.id === data.look);
+    if (!look) return null;
+    return {
+      name: look.name,
+      steps: look.steps.map((s) => ({
+        t: s.title, i: s.instruction, p: s.tip,
+        c: look.layers[s.layer]?.color ?? null,
+      })),
+    };
+  }
+  if (Array.isArray(data?.photo)) {
+    const steps = [];
+    for (const [layer, color] of data.photo) {
+      const step = PHOTO_STEPS.find((s) => s.layer === layer);
+      if (step) steps.push({ t: step.title, i: step.instruction, p: step.tip, c: color });
+    }
+    return steps.length ? { name: data.name, steps } : null;
+  }
+  return null;
 }
 
 // -- base64url over Uint8Array --
@@ -75,8 +108,9 @@ export async function parseCompanionHash(hash) {
   if (!hash?.startsWith(COMPANION_HASH_PREFIX)) return null;
   try {
     const data = await decodePayload(hash.slice(COMPANION_HASH_PREFIX.length));
-    if (data?.v !== 1 || !Array.isArray(data.steps) || data.steps.length === 0) return null;
-    return data;
+    const full = unpackSteps(data);
+    if (!full || !Array.isArray(full.steps) || full.steps.length === 0) return null;
+    return full;
   } catch {
     return null;
   }

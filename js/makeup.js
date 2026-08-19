@@ -8,6 +8,7 @@ import {
   LEFT_LASH_BROW, RIGHT_LASH_BROW,
   LEFT_CHEEK, RIGHT_CHEEK, LEFT_CONTOUR, RIGHT_CONTOUR,
   LEFT_IRIS, RIGHT_IRIS,
+  LEFT_TEMPLE, RIGHT_TEMPLE, NOSE_BRIDGE, NOSE_TIP,
   FACE_WIDTH_REF, FACE_OVAL,
 } from "./landmarks.js";
 import { LAYER_ORDER } from "./looks.js";
@@ -325,6 +326,168 @@ function lashStrokes(lm, lashIdx, eyeIdx, w, h) {
   return out;
 }
 
+/**
+ * A soft round deposit: a cluster of dabs filling a radius, used by the
+ * blush placements so each one blends like powder rather than a disc.
+ */
+function blob(centre, radius, weight, fw) {
+  const dabs = [];
+  const rings = 3;
+  for (let r = 0; r < rings; r++) {
+    const rr = (r / rings) * radius;
+    const count = r === 0 ? 1 : 6 * r;
+    for (let k = 0; k < count; k++) {
+      const a = (k / count) * Math.PI * 2;
+      dabs.push({
+        p: { x: centre.x + Math.cos(a) * rr, y: centre.y + Math.sin(a) * rr },
+        radius: Math.max(fw * 0.03, radius * 0.55),
+        weight: weight * (1 - (rr / radius) * 0.45),
+      });
+    }
+  }
+  return dabs;
+}
+
+function smear(from, to, radius, weight, fw, steps = 7) {
+  const dabs = [];
+  for (let i = 0; i < steps; i++) {
+    const t = i / (steps - 1);
+    dabs.push(...blob(lerp(from, to, t), radius * (1 - t * 0.3),
+      weight * Math.sin(Math.PI * (0.18 + 0.8 * t)), fw));
+  }
+  return dabs;
+}
+
+/**
+ * Where blush sits changes the whole face, and the placements have names
+ * and followings of their own, so each is a choice rather than a constant.
+ */
+function blushBrush(lm, style, w, h) {
+  const fw = faceWidth(lm, w, h);
+  const cheeks = [
+    { pair: LEFT_CHEEK, temple: LEFT_TEMPLE, lash: LEFT_LASH, lower: LEFT_LOWER_LASH },
+    { pair: RIGHT_CHEEK, temple: RIGHT_TEMPLE, lash: RIGHT_LASH, lower: RIGHT_LOWER_LASH },
+  ];
+  const bridge = px(lm, NOSE_BRIDGE, w, h);
+  const tip = px(lm, NOSE_TIP, w, h);
+  const dabs = [];
+
+  for (const c of cheeks) {
+    const apple = cheekCenter(lm, c.pair, w, h);
+    const temple = px(lm, c.temple, w, h);
+    const underEye = underEyeOffset(lm, c.lash, c.lower, w, h, 1.5);
+    const midUnder = underEye[Math.floor(underEye.length / 2)];
+
+    switch (style) {
+      case "draping":
+        // Swept up from the cheek to the temple, blush as contour.
+        dabs.push(...smear(apple, lerp(apple, temple, 0.85), fw * 0.075, 1, fw, 8));
+        break;
+      case "eyeEnlarging":
+        // Hugging the lower lid, which pushes the eye open.
+        dabs.push(...smear(
+          lerp(underEye[underEye.length - 2], apple, 0.15),
+          lerp(underEye[1], apple, 0.3), fw * 0.055, 0.95, fw, 7));
+        break;
+      case "rabbit":
+        // Under the eyes and across the bridge: the flushed look.
+        dabs.push(...smear(midUnder, lerp(midUnder, apple, 0.45), fw * 0.06, 0.9, fw, 5));
+        dabs.push(...blob(lerp(midUnder, bridge, 0.75), fw * 0.055, 0.75, fw));
+        break;
+      case "cheekbones":
+        // Round and high, with a touch on the nose.
+        dabs.push(...blob(lerp(apple, temple, 0.3), fw * 0.1, 1, fw));
+        break;
+      case "sunkissed":
+        // A band running cheek to cheek across the nose.
+        dabs.push(...smear(lerp(apple, temple, 0.35), lerp(apple, bridge, 0.75),
+          fw * 0.075, 0.95, fw, 7));
+        break;
+      case "apples":
+      default:
+        dabs.push(...blob(apple, fw * 0.105, 1, fw));
+        break;
+    }
+  }
+
+  if (style === "cheekbones") dabs.push(...blob(tip, fw * 0.035, 0.5, fw));
+  if (style === "sunkissed") dabs.push(...blob(lerp(bridge, tip, 0.5), fw * 0.05, 0.7, fw));
+
+  return [{ kind: "brush", dabs, pts: dabs.map((d) => d.p) }];
+}
+
+/** Shimmer at the inner corner (眼头) — what opens the eye inward. */
+function innerCornerBrush(lm, lashIdx, w, h) {
+  const lash = toPoints(lm, lashIdx, w, h);
+  const inner = lash[lash.length - 1];
+  const along = lash[lash.length - 3] ?? lash[0];
+  const fw = faceWidth(lm, w, h);
+  const dx = inner.x - along.x;
+  const dy = inner.y - along.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const centre = { x: inner.x + (dx / len) * fw * 0.012, y: inner.y + (dy / len) * fw * 0.006 };
+  return { kind: "brush", dabs: blob(centre, fw * 0.028, 1, fw), pts: [centre] };
+}
+
+/** Depth wrapped around the outer corner (眼尾), lid and lower lid together. */
+function outerCornerBrush(lm, lashIdx, lowerIdx, w, h) {
+  const lash = toPoints(lm, lashIdx, w, h);
+  const lower = toPoints(lm, lowerIdx, w, h);
+  const fw = faceWidth(lm, w, h);
+  const outer = lash[0];
+  const dabs = [
+    ...blob(outer, fw * 0.045, 1, fw),
+    ...blob(lerp(lash[0], lash[2], 0.7), fw * 0.038, 0.8, fw),
+    ...blob(lerp(lower[0], lower[2], 0.7), fw * 0.036, 0.75, fw),
+  ];
+  return { kind: "brush", dabs, pts: dabs.map((d) => d.p) };
+}
+
+/** Colour laid on the lower lid itself (下眼皮铺色), outer weighted. */
+function lowerLidBrush(lm, lashIdx, lowerIdx, w, h) {
+  const lower = toPoints(lm, lowerIdx, w, h);
+  const below = underEyeOffset(lm, lashIdx, lowerIdx, w, h, 0.5);
+  const fw = faceWidth(lm, w, h);
+  const dabs = [];
+  for (let i = 0; i < lower.length; i++) {
+    const u = i / (lower.length - 1); // 0 outer, 1 inner
+    for (const t of [0.15, 0.5]) {
+      dabs.push({
+        p: lerp(lower[i], below[i], t),
+        radius: fw * 0.03,
+        // Heaviest at the outer third, gone before the inner corner.
+        weight: Math.max(0, (1 - u) ** 0.8) * (1 - t * 0.4),
+      });
+    }
+  }
+  return { kind: "brush", dabs, pts: lower.concat([...below].reverse()), closed: true };
+}
+
+/** Lower lashes, short and fanning downward. */
+function lowerLashStrokes(lm, lowerIdx, eyeIdx, w, h) {
+  const lower = toPoints(lm, lowerIdx, w, h);
+  const eye = toPoints(lm, eyeIdx, w, h);
+  const cx = eye.reduce((a, p) => a + p.x, 0) / eye.length;
+  const cy = eye.reduce((a, p) => a + p.y, 0) / eye.length;
+  const eyeW = Math.hypot(lower[0].x - lower[lower.length - 1].x,
+    lower[0].y - lower[lower.length - 1].y);
+  const out = [];
+  for (let i = 1; i < lower.length - 1; i++) {
+    const u = i / (lower.length - 1);
+    const base = lower[i];
+    const dx = base.x - cx;
+    const dy = base.y - cy;
+    const len = Math.hypot(dx, dy) || 1;
+    const reach = eyeW * (0.16 - 0.07 * u);
+    out.push({
+      kind: "line",
+      width: Math.max(1, eyeW * 0.016),
+      pts: [base, { x: base.x + (dx / len) * reach, y: base.y + (dy / len) * reach }],
+    });
+  }
+  return out;
+}
+
 /** Iris disc, from the refined iris ring. */
 function irisDisc(lm, irisIdx, w, h) {
   const c = px(lm, irisIdx[0], w, h);
@@ -342,7 +505,7 @@ function irisDisc(lm, irisIdx, w, h) {
  * Shared by the live-view painters, the tutorial highlight, and the
  * reference-photo zoom/trace overlay, so all three always agree.
  */
-export function regionShapes(lm, layer, w, h) {
+export function regionShapes(lm, layer, w, h, variant) {
   const fw = faceWidth(lm, w, h);
   switch (layer) {
     case "foundation":
@@ -387,13 +550,30 @@ export function regionShapes(lm, layer, w, h) {
         ...lashStrokes(lm, LEFT_LASH, LEFT_EYE, w, h),
         ...lashStrokes(lm, RIGHT_LASH, RIGHT_EYE, w, h),
       ];
+    case "lowerLid":
+      return [
+        lowerLidBrush(lm, LEFT_LASH, LEFT_LOWER_LASH, w, h),
+        lowerLidBrush(lm, RIGHT_LASH, RIGHT_LOWER_LASH, w, h),
+      ];
+    case "outerCorner":
+      return [
+        outerCornerBrush(lm, LEFT_LASH, LEFT_LOWER_LASH, w, h),
+        outerCornerBrush(lm, RIGHT_LASH, RIGHT_LOWER_LASH, w, h),
+      ];
+    case "innerCorner":
+      return [
+        innerCornerBrush(lm, LEFT_LASH, w, h),
+        innerCornerBrush(lm, RIGHT_LASH, w, h),
+      ];
+    case "lowerLashes":
+      return [
+        ...lowerLashStrokes(lm, LEFT_LOWER_LASH, LEFT_EYE, w, h),
+        ...lowerLashStrokes(lm, RIGHT_LOWER_LASH, RIGHT_EYE, w, h),
+      ];
     case "lenses":
       return [irisDisc(lm, LEFT_IRIS, w, h), irisDisc(lm, RIGHT_IRIS, w, h)];
     case "blush":
-      return [
-        { kind: "circle", center: cheekCenter(lm, LEFT_CHEEK, w, h), r: fw * 0.16 },
-        { kind: "circle", center: cheekCenter(lm, RIGHT_CHEEK, w, h), r: fw * 0.16 },
-      ];
+      return blushBrush(lm, variant, w, h);
     case "contour":
       return [
         contourBrush(lm, LEFT_CONTOUR, LEFT_CHEEK, w, h),
@@ -441,8 +621,8 @@ export function shapesBounds(shapes) {
  * maxScale keeps a tiny region (a lash line) from filling the frame at an
  * unusable magnification.
  */
-export function zoomTargetFor(lm, layer, w, h, { pad = 1.22, maxScale = 4 } = {}) {
-  const box = shapesBounds(regionShapes(lm, layer, w, h));
+export function zoomTargetFor(lm, layer, w, h, { pad = 1.22, maxScale = 4, variant } = {}) {
+  const box = shapesBounds(regionShapes(lm, layer, w, h, variant));
   if (!box) return null;
   const bw = Math.max(box.w * pad, 1);
   const bh = Math.max(box.h * pad, 1);
@@ -494,13 +674,17 @@ const LAYER_STYLE = {
   // the tip; the lower line softens at both ends.
   linerWing: { composite: "multiply", blurScale: 0.5, fadeTip: true },
   linerLower: { composite: "multiply", blurScale: 0.7, fadeEnds: true },
-  // Highlight, so it lightens rather than darkens.
+  lowerLid: { composite: "multiply", blurScale: 1.0, brush: true, dabAlpha: 0.05 },
+  outerCorner: { composite: "multiply", blurScale: 1.0, brush: true, dabAlpha: 0.05 },
+  // Highlights, so they lighten rather than darken.
+  innerCorner: { composite: "screen", blurScale: 0.8, brush: true, dabAlpha: 0.07 },
+  lowerLashes: { composite: "multiply", blurScale: 0.3, fadeTip: true, afterEyes: true },
   aegyoSal: { composite: "screen", blurScale: 1.0, brush: true, dabAlpha: 0.05 },
   underEyeShade: { composite: "multiply", blurScale: 1.0, brush: true, dabAlpha: 0.05 },
   // Painted after the eye opening is restored, or they would be wiped.
   lashes: { composite: "multiply", blurScale: 0.3, fadeTip: true, afterEyes: true },
   lenses: { composite: "color", blurScale: 0.2, radial: true, afterEyes: true },
-  blush: { composite: "multiply", blurScale: 1.0, radial: true },
+  blush: { composite: "multiply", blurScale: 1.0, brush: true, dabAlpha: 0.035 },
   lipstick: { composite: "multiply", blurScale: 0.5, carveMouth: true },
 };
 
@@ -508,9 +692,9 @@ const LAYER_STYLE = {
 // is what makes a base layer read as an orange filter instead of skin.
 const FOUNDATION_HOLES = [LEFT_EYE, RIGHT_EYE, LEFT_BROW, RIGHT_BROW, LIPS_OUTER];
 
-function paintLayer(ctx, lm, layer, w, h, { color, alpha, blur, blend }, scratch) {
+function paintLayer(ctx, lm, layer, w, h, { color, alpha, blur, blend, variant }, scratch) {
   const style = LAYER_STYLE[layer];
-  const shapes = regionShapes(lm, layer, w, h);
+  const shapes = regionShapes(lm, layer, w, h, variant);
   if (!style || shapes.length === 0) return;
 
   ctx.save();
@@ -662,11 +846,11 @@ export class MakeupRenderer {
   }
 
   /** Ease the live view toward the step's target region. */
-  #updateView(landmarks, zoomLayer, w, h) {
+  #updateView(landmarks, zoomLayer, w, h, blushStyle) {
     const identity = { cx: w / 2, cy: h / 2, scale: 1 };
     let target = identity;
     if (landmarks && zoomLayer) {
-      target = zoomTargetFor(landmarks, zoomLayer, w, h) ?? identity;
+      target = zoomTargetFor(landmarks, zoomLayer, w, h, { variant: blushStyle }) ?? identity;
     }
     if (!this.view) {
       this.view = { ...target };
@@ -692,7 +876,7 @@ export class MakeupRenderer {
     const w = canvas.width;
     const h = canvas.height;
 
-    const view = this.#updateView(landmarks, options.zoomLayer, w, h);
+    const view = this.#updateView(landmarks, options.zoomLayer, w, h, options.blushStyle);
 
     ctx.save();
     // Mirror for selfie view, then frame the region being taught.
@@ -721,7 +905,8 @@ export class MakeupRenderer {
           const alpha = cfg.amount * options.intensity;
           if (alpha <= 0.01) continue;
           paintLayer(ctx, landmarks, layer, w, h,
-            { color: cfg.color, alpha, blur, blend: cfg.blend }, this.#scratch(w, h));
+            { color: cfg.color, alpha, blur, blend: cfg.blend, variant: options.blushStyle },
+            this.#scratch(w, h));
         }
       };
 
@@ -740,6 +925,7 @@ export class MakeupRenderer {
       if (options.highlightLayer) {
         this.#drawHighlight(
           landmarks, options.highlightLayer, w, h, fw, options.time ?? 0, view.scale,
+          options.blushStyle,
         );
       }
     }
@@ -781,7 +967,7 @@ export class MakeupRenderer {
     }
   }
 
-  #drawHighlight(lm, layer, w, h, fw, time, zoom = 1) {
+  #drawHighlight(lm, layer, w, h, fw, time, zoom = 1, variant) {
     const { ctx } = this;
     const pulse = 0.55 + 0.45 * Math.sin(time / 300);
     ctx.save();
@@ -796,7 +982,7 @@ export class MakeupRenderer {
     ctx.shadowColor = "rgba(255,80,140,0.9)";
     ctx.shadowBlur = 8 / zoom;
 
-    for (const s of regionShapes(lm, layer, w, h)) {
+    for (const s of regionShapes(lm, layer, w, h, variant)) {
       traceShape(ctx, s);
       ctx.stroke();
     }

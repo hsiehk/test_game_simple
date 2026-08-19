@@ -48,6 +48,12 @@ export const RIGHT_LASH_BROW = [276, 276, 283, 282, 282, 295, 295, 285, 285];
 export const LEFT_CHEEK = [205, 50];
 export const RIGHT_CHEEK = [425, 280];
 
+// Anchors the blush placements are laid out against.
+export const LEFT_TEMPLE = 234;
+export const RIGHT_TEMPLE = 454;
+export const NOSE_BRIDGE = 6;
+export const NOSE_TIP = 4;
+
 // Face width reference (ear to ear) used to scale brush sizes.
 export const FACE_WIDTH_REF = [234, 454];
 
