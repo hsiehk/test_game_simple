@@ -32,6 +32,16 @@ and no photos or video ever leave your machine.
   teaching (eyes for liner and shadow, cheeks for blush, mouth for lips) and
   glides between them, with the reference photo's matching region pinned
   alongside so you can work close-up, part by part. Toggleable.
+- **The whole eye** — beyond liner and shadow: the aegyo-sal (the ridge
+  under the lower lashes) is highlighted and shaded beneath to round the eye
+  out, lashes are fanned from the lash line, and coloured lenses are rendered
+  on the iris itself.
+- **Wearables, detected not painted** — an uploaded reference is measured for
+  things makeup cannot do. A lash line far denser than bare lashes is
+  reported (falsies or layered mascara — a photo cannot tell those apart, and
+  the advice says so), and the iris is compared against the wearer's own for
+  both colour and size, since circle lenses enlarge it. Suggestions appear
+  alongside the tutorial rather than as steps to paint.
 - **Full eye liner** — the upper lash line, the tail past the outer corner
   where the upper and lower lines meet, and the lower lash line are separate
   regions with their own tutorial steps, so a look built on lower liner or a

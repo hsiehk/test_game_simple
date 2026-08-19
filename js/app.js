@@ -1,6 +1,8 @@
 import { LOOKS, getLook, LAYER_ORDER } from "./looks.js";
 import { MakeupRenderer } from "./makeup.js";
-import { buildPhotoLook, drawReferenceCrop } from "./photolook.js";
+import {
+  buildPhotoLook, drawReferenceCrop, readEyes, lensAdvice,
+} from "./photolook.js";
 import {
   packSteps, encodePayload, buildCompanionUrl, parseCompanionHash,
 } from "./companion.js";
@@ -36,6 +38,8 @@ const els = {
   refInset: document.getElementById("ref-inset"),
   refInsetWrap: document.getElementById("ref-inset-wrap"),
   zoomBtn: document.getElementById("zoom-btn"),
+  advicePanel: document.getElementById("advice-panel"),
+  adviceList: document.getElementById("advice-list"),
   prevBtn: document.getElementById("prev-step"),
   nextBtn: document.getElementById("next-step"),
   sendPhoneBtn: document.getElementById("send-phone-btn"),
@@ -65,6 +69,8 @@ const state = {
   ghostActive: false,
   ghostOpacity: 0.55,
   zoomToStep: true,
+  myEyes: null,
+  advice: [],
 };
 
 let renderer = null;
@@ -160,6 +166,65 @@ function setMirrorMode(on) {
   document.body.classList.toggle("mirror-mode", on);
   els.mirrorBtn.textContent = on ? "Exit mirror mode" : "🪞 Mirror mode";
   refreshHud();
+}
+
+
+// Suggestions that are not steps to paint: things to wear.
+function refreshAdvice() {
+  const look = state.photoLook;
+  const obs = look?.observed;
+  const items = [];
+  if (obs) {
+    if (obs.lashDrama > 0.45) {
+      items.push({
+        icon: "👁️",
+        title: "Dramatic lashes",
+        text: "The lash line in your reference is much denser than bare lashes. That is either a strip of falsies or several coats of mascara on curled lashes — from a photo the two look the same, so try mascara first and add a half-strip on the outer corner if you want more.",
+      });
+    } else if (obs.lashDrama > 0.25) {
+      items.push({
+        icon: "👁️",
+        title: "Defined lashes",
+        text: "Your reference has noticeably darker lashes than bare ones. Curl, then two coats of mascara worked into the roots should get you there without falsies.",
+      });
+    }
+    const lens = lensAdvice(obs.eyes, state.myEyes);
+    if (lens) {
+      const bits = [];
+      if (lens.enlarged) {
+        bits.push("the iris takes up more of the eye than yours does, which is what circle lenses do");
+      }
+      if (lens.recoloured) {
+        bits.push("the iris colour is not close to your own");
+      }
+      items.push({
+        icon: "🔮",
+        title: "Contact lenses",
+        swatch: `rgb(${Math.round(lens.color.r)},${Math.round(lens.color.g)},${Math.round(lens.color.b)})`,
+        text: `Some of this look is the eyes themselves, not makeup: ${bits.join(", and ")}. The swatch is the shade measured from your reference. Only ever wear lenses fitted by an optometrist — cosmetic lenses sit on the cornea and ill-fitting ones scratch it.`,
+      });
+    }
+  }
+  state.advice = items;
+  els.advicePanel.classList.toggle("hidden", items.length === 0);
+  els.adviceList.textContent = "";
+  for (const item of items) {
+    const li = document.createElement("li");
+    const h = document.createElement("p");
+    h.className = "advice-title";
+    if (item.swatch) {
+      const sw = document.createElement("span");
+      sw.className = "advice-swatch";
+      sw.style.background = item.swatch;
+      h.appendChild(sw);
+    }
+    h.appendChild(document.createTextNode(`${item.icon} ${item.title}`));
+    const body = document.createElement("p");
+    body.className = "advice-text";
+    body.textContent = item.text;
+    li.append(h, body);
+    els.adviceList.appendChild(li);
+  }
 }
 
 function refreshZoomBtn() {
@@ -329,6 +394,7 @@ async function loadReferencePhoto(file) {
     state.photoLook = buildPhotoLook(image, landmarks);
     buildLookButtons();
     selectLook("photo");
+    refreshAdvice();
     state.tutorialMode = true;
     state.stepIndex = 0;
     refreshTutorial();
@@ -454,6 +520,16 @@ function frameLoop(time) {
   }
 
   const landmarks = lastResult?.faceLandmarks?.[0] ?? null;
+
+  if (landmarks && !state.myEyes) {
+    try {
+      state.myEyes = readEyes(els.video, landmarks, els.canvas.width, els.canvas.height);
+      if (state.myEyes && state.photoLook) refreshAdvice();
+    } catch {
+      state.myEyes = null;
+    }
+  }
+
   const step = state.tutorialMode ? state.look.steps[state.stepIndex] : null;
 
   // In tutorial mode, only layers up to the current step are applied,

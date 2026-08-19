@@ -192,6 +192,41 @@ button.wide { width: 100%; }
 
 .tutorial { border: 1px solid rgba(255, 79, 139, 0.4); }
 
+.advice { border: 1px solid rgba(255, 143, 179, 0.25); }
+
+.advice-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.advice-title {
+  margin: 0 0 0.25rem;
+  font-weight: 600;
+  font-size: 0.92rem;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.advice-swatch {
+  width: 1rem;
+  height: 1rem;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.55);
+  flex: none;
+}
+
+.advice-text {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
 .step-counter {
   margin: 0 0 0.2rem;
   color: var(--accent-2);
