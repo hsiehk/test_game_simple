@@ -118,6 +118,19 @@ export function lensAdvice(ref, mine) {
   };
 }
 
+/**
+ * Highlights are judged by how much brighter than skin they are, since a
+ * tint relative to skin only ever describes something darker.
+ */
+export function highlightStrength(region, skin, { floor = 0.15, cap = 0.55 } = {}) {
+  if (!region || !skin) return floor;
+  const lum = (c) => 0.299 * c.r + 0.587 * c.g + 0.114 * c.b;
+  const lift = (lum(region) - lum(skin)) / Math.max(lum(skin), 1);
+  return Math.max(floor, Math.min(cap, lift * 2.2));
+}
+
+const HIGHLIGHT_LAYERS = new Set(["innerCorner", "aegyoSal"]);
+
 // Per-layer application strength caps (a lip color can go bolder than a
 // full-face contour without looking painted on).
 const LAYER_CAPS = {
@@ -128,6 +141,10 @@ const LAYER_CAPS = {
   eyeliner: { floor: 0.2, cap: 0.8 },
   linerWing: { floor: 0.15, cap: 0.8 },
   linerLower: { floor: 0.12, cap: 0.7 },
+  lowerLid: { floor: 0.12, cap: 0.55 },
+  outerCorner: { floor: 0.15, cap: 0.6 },
+  innerCorner: { floor: 0.15, cap: 0.55 },
+  lowerLashes: { floor: 0.2, cap: 0.7 },
   aegyoSal: { floor: 0.15, cap: 0.5 },
   underEyeShade: { floor: 0.1, cap: 0.45 },
   lashes: { floor: 0.3, cap: 0.9 },
@@ -163,6 +180,18 @@ export const PHOTO_STEPS = [
     tip: "Match where the color *stops* — placement matters more than the exact shade.",
   },
   {
+    layer: "lowerLid",
+    title: "Carry colour under the lower lashes",
+    instruction: "Sweep the same shade through the outlined area beneath your lower lashes, heaviest at the outer third and fading out before the inner corner. Compare how far it reaches in your reference.",
+    tip: "Use the colour left on the brush — the lower lid needs a fraction of what the lid took.",
+  },
+  {
+    layer: "outerCorner",
+    title: "Deepen the outer corner",
+    instruction: "Press a deeper shade into the outlined outer corner with a small brush, joining the lid and lower lid so they wrap into a soft V. Check how dark your reference takes this.",
+    tip: "Small amounts, many times — this is the step that shapes the eye.",
+  },
+  {
     layer: "eyeliner",
     title: "Trace the liner",
     instruction: "Look closely at how thick the liner sits on the upper lash line in your reference, and where it starts. Trace the dashed line on your own lash line, keeping it thinnest at the inner corner and building thickness toward the outside. The corner and lower line come next.",
@@ -181,6 +210,12 @@ export const PHOTO_STEPS = [
     tip: "Smudge the lower line with a cotton bud — a crisp line under the eye reads harsh in daylight.",
   },
   {
+    layer: "innerCorner",
+    title: "Brighten the inner corner",
+    instruction: "Press a pearly shimmer into the small outlined patch at each inner corner. It takes almost nothing and makes the eyes look wider apart and more awake.",
+    tip: "Pat it on with a fingertip; a fluffy brush scatters it across the lid.",
+  },
+  {
     layer: "aegyoSal",
     title: "Light up the aegyo-sal",
     instruction: "Just under your lower lashes is a small ridge that puffs up when you smile. Press a light shimmer along the outlined band there — pat it on with a fingertip rather than sweeping, so it stays put and catches the light.",
@@ -197,6 +232,12 @@ export const PHOTO_STEPS = [
     title: "Lashes",
     instruction: "Curl your lashes hard at the root, then coat from the base upward, wiggling as you go. Concentrate the outer third to pull the eye outward, matching the fan shown on your face.",
     tip: "Let each coat dry a few seconds before the next, or they clump instead of lengthening.",
+  },
+  {
+    layer: "lowerLashes",
+    title: "Lower lashes",
+    instruction: "Hold the wand vertically and touch each lower lash separately, following the short fan outlined on your face, keeping them fine and separated.",
+    tip: "A smaller wand — or the tip of a used one — gives far more control down here.",
   },
   {
     layer: "blush",
@@ -305,6 +346,13 @@ export function buildPhotoLook(image, landmarks) {
     if (layer === "foundation") {
       // Foundation paints the photo's own skin tone as a soft-light wash.
       layers.foundation = { color: rgbToHex(skin), amount: LAYER_CAPS.foundation.cap };
+    } else if (HIGHLIGHT_LAYERS.has(layer)) {
+      // Painted with the sampled colour itself; a multiply tint cannot
+      // describe something lighter than the skin around it.
+      layers[layer] = {
+        color: rgbToHex(avg),
+        amount: highlightStrength(avg, skin, LAYER_CAPS[layer]),
+      };
     } else if (layer === "lipstick") {
       // Lips carry the reference's actual color rather than a tint relative
       // to its skin: a multiply tint clips at white, so a vivid red comes
@@ -370,10 +418,10 @@ export function readEyes(source, landmarks, w, h) {
  * Draw a zoomed crop of the reference photo focused on one layer's region,
  * with the trace shape outlined, into the given canvas.
  */
-export function drawReferenceCrop(canvas, image, landmarks, layer) {
+export function drawReferenceCrop(canvas, image, landmarks, layer, variant) {
   const iw = image.width;
   const ih = image.height;
-  const shapes = regionShapes(landmarks, layer, iw, ih);
+  const shapes = regionShapes(landmarks, layer, iw, ih, variant);
   if (shapes.length === 0) return;
 
   const box = shapesBounds(shapes);

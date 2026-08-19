@@ -47,7 +47,7 @@ const check = (name, ok) => { results.push([name, ok]); console.log(ok ? "PASS" 
 
 await page.goto("http://localhost:8123/");
 check("page loads with title", (await page.title()).includes("MirrorMuse"));
-check("5 look buttons render", (await page.locator(".look-btn").count()) === 5);
+check("5 look buttons render", (await page.locator("#look-list .look-btn").count()) === 5);
 check("app state exposed", await page.evaluate(() => window.__app?.looks?.length === 5));
 
 // Tutorial UI works without camera.
@@ -59,8 +59,26 @@ check("advances to step 2", (await page.locator("#step-counter").textContent()).
 await page.click("#mode-toggle"); // exit
 
 // Look switching.
-await page.locator(".look-btn", { hasText: "Smokey" }).click();
+await page.locator("#look-list .look-btn", { hasText: "Smokey" }).click();
 check("look switches", await page.evaluate(() => window.__app.state.look.id === "smokey"));
+
+// Blush placements: six of them, each selectable and reflected in state.
+{
+  const { BLUSH_STYLES } = await import("../js/looks.js");
+  check("blush placements render", (await page.locator("#blush-row .blush-btn").count())
+    === BLUSH_STYLES.length);
+  await page.locator("#blush-row .blush-btn", { hasText: "Draping" }).click();
+  check("picking a placement updates state",
+    await page.evaluate(() => window.__app.state.blushStyle === "draping"));
+  check("placement hint shown",
+    (await page.locator("#blush-hint").textContent()).length > 20);
+  // A look carries its own placement, so switching looks adopts it.
+  await page.locator("#look-list .look-btn", { hasText: "Korean" }).click();
+  check("switching looks adopts that look's placement",
+    await page.evaluate(() => window.__app.state.blushStyle === null
+      && window.__app.state.look.blushStyle === "eyeEnlarging"));
+  await page.locator("#look-list .look-btn", { hasText: "Smokey" }).click();
+}
 
 // Start camera (fake device) and let the tracker + render loop run.
 await page.click("#start-btn");
