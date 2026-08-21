@@ -86,14 +86,34 @@ test("blush placements actually sit in different places", () => {
   assert.ok(spread("sunkissed") > spread("apples"),
     "sunkissed spans wider than apples");
 
-  // No two placements land in the same spot.
+  // No two placements cover the same ground. Compared as coarse occupancy
+  // rather than by centroid: every placement here is symmetric, so their
+  // centroids all sit near the middle of the face however differently they
+  // are laid out.
+  const cells = (id) => {
+    const grid = new Set();
+    for (const s of regionShapes(lm, "blush", W, H, id)) {
+      for (const d of s.dabs) {
+        grid.add(`${Math.round(d.p.x / 25)},${Math.round(d.p.y / 25)}`);
+      }
+    }
+    return grid;
+  };
+  // Shared ground over combined ground, not over the smaller of the two:
+  // a compact placement legitimately sits inside a sweeping one (high
+  // cheekbones within the sunkissed band), and measuring against the
+  // smaller one calls that a duplicate when it is nothing of the kind.
   const ids = BLUSH_STYLES.map((b) => b.id);
+  const grids = new Map(ids.map((id) => [id, cells(id)]));
   for (let i = 0; i < ids.length; i++) {
     for (let j = i + 1; j < ids.length; j++) {
-      const a = centres.get(ids[i]);
-      const b = centres.get(ids[j]);
-      assert.ok(Math.hypot(a.x - b.x, a.y - b.y) > 2,
-        `${ids[i]} and ${ids[j]} are distinct placements`);
+      const a = grids.get(ids[i]);
+      const b = grids.get(ids[j]);
+      const shared = [...a].filter((k) => b.has(k)).length;
+      const combined = new Set([...a, ...b]).size;
+      const overlap = shared / combined;
+      assert.ok(overlap < 0.5,
+        `${ids[i]} and ${ids[j]} are not near-duplicates (${Math.round(overlap * 100)}% shared)`);
     }
   }
 });

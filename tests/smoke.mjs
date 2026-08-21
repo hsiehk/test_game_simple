@@ -159,6 +159,43 @@ if (process.env.SMOKE_FACE_IMAGE) {
     await page.click("#next-step");
     check("photo tutorial advances", (await page.locator("#step-counter").textContent()).includes("Step 2"));
 
+    // Cost guards. Canvas blur was ~90% of the whole frame (394ms against
+    // 40ms over a full look) and duplicated softness the geometry already
+    // provides, so no layer may ask for one again. And the mirror must not
+    // render more pixels than it displays — fill rate is what heats a phone.
+    const cost = await page.evaluate(async () => {
+      const { MakeupRenderer } = await import("./js/makeup.js");
+      const { getLook } = await import("./js/looks.js");
+      const lm = window.__app.state.photoLandmarks;
+      const proto = CanvasRenderingContext2D.prototype;
+      const real = Object.getOwnPropertyDescriptor(proto, "filter");
+      const asked = [];
+      Object.defineProperty(proto, "filter", {
+        get() { return real.get.call(this); },
+        set(v) { asked.push(v); real.set.call(this, v); },
+        configurable: true,
+      });
+      const W = 640, H = 480;
+      const flat = document.createElement("canvas");
+      flat.width = W; flat.height = H;
+      const c = document.createElement("canvas");
+      c.width = W; c.height = H;
+      new MakeupRenderer(c).render(flat, lm, getLook("puppy-liner"), {
+        intensity: 1, enabledLayers: null, highlightLayer: "eyeshadow",
+        zoomLayer: "eyeshadow", compare: false, blushStyle: "eyeEnlarging", time: 0,
+      });
+      Object.defineProperty(proto, "filter", real);
+      return {
+        blurs: asked.filter((v) => typeof v === "string" && v.includes("blur")).length,
+        canvasWidth: document.getElementById("stage").width,
+        videoWidth: document.getElementById("camera").videoWidth,
+      };
+    });
+    check(`no layer asks for a canvas blur (${cost.blurs} requested)`, cost.blurs === 0);
+    check(`render size is capped (${cost.canvasWidth}px canvas, ${cost.videoWidth}px camera)`,
+      cost.canvasWidth > 0 && cost.canvasWidth <= 720
+        && cost.canvasWidth <= Math.max(cost.videoWidth, 320));
+
     // Filter-independence guard. Every layer's softness must come from its
     // geometry, not from ctx.filter blur: browsers that ignore the filter
     // are exactly where a stroked contour shipped as two hard bars across
