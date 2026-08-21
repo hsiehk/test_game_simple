@@ -539,12 +539,48 @@ async function startCamera() {
     els.video.onloadedmetadata = resolve;
   });
   await els.video.play();
-  els.canvas.width = els.video.videoWidth;
-  els.canvas.height = els.video.videoHeight;
+  sizeCanvas();
 }
+
+/**
+ * Rendering above the size the canvas is displayed at is wasted fill rate,
+ * and fill rate is what makes a phone hot. Match the display, capped so a
+ * desktop does not push the per-frame cost up for no visible gain.
+ */
+const MAX_RENDER_WIDTH = 720;
+
+function sizeCanvas() {
+  const vw = els.video.videoWidth || 960;
+  const vh = els.video.videoHeight || 720;
+  const displayed = els.canvas.clientWidth * (window.devicePixelRatio || 1);
+  const target = Math.max(320, Math.min(vw, MAX_RENDER_WIDTH, displayed || vw));
+  const width = Math.round(target);
+  const height = Math.round((vh / vw) * width);
+  if (els.canvas.width !== width || els.canvas.height !== height) {
+    els.canvas.width = width;
+    els.canvas.height = height;
+  }
+}
+
+// A mirror does not need to redraw at a phone's full refresh rate. Half
+// the frames is half the work and half the heat, and at this cadence the
+// difference is not visible.
+const FRAME_INTERVAL_MS = 1000 / 30;
+let lastFrameAt = 0;
 
 function frameLoop(time) {
   if (!state.running) return;
+
+  // Nothing to show while the page is hidden; keep the loop alive but idle.
+  if (document.hidden) {
+    requestAnimationFrame(frameLoop);
+    return;
+  }
+  if (time - lastFrameAt < FRAME_INTERVAL_MS) {
+    requestAnimationFrame(frameLoop);
+    return;
+  }
+  lastFrameAt = time;
 
   if (els.video.currentTime !== lastVideoTime) {
     lastVideoTime = els.video.currentTime;
@@ -631,6 +667,9 @@ async function start() {
     return;
   }
   els.startPanel.classList.add("hidden");
+  // The panel was covering the canvas; now it has its real displayed size.
+  sizeCanvas();
+  window.addEventListener("resize", sizeCanvas);
   renderer = new MakeupRenderer(els.canvas);
   state.running = true;
   setStatus("");

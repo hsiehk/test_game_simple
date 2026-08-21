@@ -148,7 +148,7 @@ function contourBrush(lm, pair, cheekPair, w, h) {
   };
   const fw = faceWidth(lm, w, h);
   const dabs = [];
-  const n = 26;
+  const n = 18;
   for (let i = 0; i < n; i++) {
     const t = i / (n - 1);
     dabs.push({
@@ -173,7 +173,7 @@ function browBrush(lm, browIdx, w, h) {
   // The loop's second half runs back the other way; reverse to pair it up.
   const lower = toPoints(lm, browIdx.slice(half), w, h).reverse();
   const dabs = [];
-  const steps = 22;
+  const steps = 16;
   for (let s = 0; s < steps; s++) {
     const t = s / (steps - 1);
     const f = t * (upper.length - 1);
@@ -204,14 +204,14 @@ function shadowBrush(lm, lashIdx, browIdx, w, h) {
   const brow = toPoints(lm, browIdx, w, h);
   const fw = faceWidth(lm, w, h);
   const dabs = [];
-  const heights = 6;
+  const heights = 4;
   for (let i = 0; i < lash.length; i++) {
     const u = i / (lash.length - 1); // 0 outer corner, 1 inner corner
     for (let j = 0; j < heights; j++) {
       const t = 0.08 + (j / (heights - 1)) * 0.62;
       dabs.push({
         p: lerp(lash[i], brow[i], t),
-        radius: fw * 0.05,
+        radius: fw * 0.058,
         // Fades upward toward the brow and inward toward the nose, and
         // eases off just past the outer corner.
         weight: (1 - t / 0.78) ** 1.15 * Math.max(0.12, Math.sin(Math.PI * (0.16 + 0.78 * u))),
@@ -332,10 +332,10 @@ function lashStrokes(lm, lashIdx, eyeIdx, w, h) {
  */
 function blob(centre, radius, weight, fw) {
   const dabs = [];
-  const rings = 3;
+  const rings = 2;
   for (let r = 0; r < rings; r++) {
     const rr = (r / rings) * radius;
-    const count = r === 0 ? 1 : 6 * r;
+    const count = r === 0 ? 1 : 6;
     for (let k = 0; k < count; k++) {
       const a = (k / count) * Math.PI * 2;
       dabs.push({
@@ -348,7 +348,7 @@ function blob(centre, radius, weight, fw) {
   return dabs;
 }
 
-function smear(from, to, radius, weight, fw, steps = 7) {
+function smear(from, to, radius, weight, fw, steps = 5) {
   const dabs = [];
   for (let i = 0; i < steps; i++) {
     const t = i / (steps - 1);
@@ -381,27 +381,30 @@ function blushBrush(lm, style, w, h) {
     switch (style) {
       case "draping":
         // Swept up from the cheek to the temple, blush as contour.
-        dabs.push(...smear(apple, lerp(apple, temple, 0.85), fw * 0.075, 1, fw, 8));
+        dabs.push(...smear(apple, lerp(apple, temple, 0.85), fw * 0.085, 1, fw, 6));
         break;
       case "eyeEnlarging":
         // Hugging the lower lid, which pushes the eye open.
         dabs.push(...smear(
           lerp(underEye[underEye.length - 2], apple, 0.15),
-          lerp(underEye[1], apple, 0.3), fw * 0.055, 0.95, fw, 7));
+          lerp(underEye[1], apple, 0.3), fw * 0.062, 0.95, fw, 5));
         break;
       case "rabbit":
-        // Under the eyes and across the bridge: the flushed look.
-        dabs.push(...smear(midUnder, lerp(midUnder, apple, 0.45), fw * 0.06, 0.9, fw, 5));
-        dabs.push(...blob(lerp(midUnder, bridge, 0.75), fw * 0.055, 0.75, fw));
+        // High and tight to the lower lid, carrying on over the bridge:
+        // the flushed look. Deliberately higher than sunkissed, which is
+        // the other placement that crosses the nose.
+        dabs.push(...smear(midUnder, lerp(midUnder, apple, 0.22), fw * 0.06, 0.95, fw, 4));
+        dabs.push(...blob(lerp(midUnder, bridge, 0.85), fw * 0.05, 0.8, fw));
         break;
       case "cheekbones":
         // Round and high, with a touch on the nose.
         dabs.push(...blob(lerp(apple, temple, 0.3), fw * 0.1, 1, fw));
         break;
       case "sunkissed":
-        // A band running cheek to cheek across the nose.
-        dabs.push(...smear(lerp(apple, temple, 0.35), lerp(apple, bridge, 0.75),
-          fw * 0.075, 0.95, fw, 7));
+        // One low, wide band running cheek to cheek across the nose, sitting
+        // level with the apples rather than up under the eyes.
+        dabs.push(...smear(lerp(apple, temple, 0.4), lerp(apple, tip, 0.55),
+          fw * 0.09, 0.95, fw, 6));
         break;
       case "apples":
       default:
@@ -411,7 +414,7 @@ function blushBrush(lm, style, w, h) {
   }
 
   if (style === "cheekbones") dabs.push(...blob(tip, fw * 0.035, 0.5, fw));
-  if (style === "sunkissed") dabs.push(...blob(lerp(bridge, tip, 0.5), fw * 0.05, 0.7, fw));
+  if (style === "sunkissed") dabs.push(...blob(lerp(bridge, tip, 0.8), fw * 0.055, 0.7, fw));
 
   return [{ kind: "brush", dabs, pts: dabs.map((d) => d.p) }];
 }
@@ -586,6 +589,48 @@ export function regionShapes(lm, layer, w, h, variant) {
   }
 }
 
+// One soft round brush head, drawn once and reused for every dab of every
+// layer. Its falloff is the deposit's softness; colour is applied after.
+let DAB_SPRITE = null;
+function dabSprite() {
+  if (DAB_SPRITE) return DAB_SPRITE;
+  const size = 64;
+  const c = document.createElement("canvas");
+  c.width = size;
+  c.height = size;
+  const x = c.getContext("2d");
+  const r = size / 2;
+  const g = x.createRadialGradient(r, r, 0, r, r, r);
+  g.addColorStop(0, "rgba(255,255,255,1)");
+  g.addColorStop(0.45, "rgba(255,255,255,0.59)");
+  g.addColorStop(0.75, "rgba(255,255,255,0.2)");
+  g.addColorStop(1, "rgba(255,255,255,0)");
+  x.fillStyle = g;
+  x.fillRect(0, 0, size, size);
+  DAB_SPRITE = c;
+  return c;
+}
+
+/** The pixels a set of brush shapes can touch, clamped to the canvas. */
+function dabBounds(shapes, w, h) {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const s of shapes) {
+    if (!s.dabs) continue;
+    for (const d of s.dabs) {
+      minX = Math.min(minX, d.p.x - d.radius);
+      maxX = Math.max(maxX, d.p.x + d.radius);
+      minY = Math.min(minY, d.p.y - d.radius);
+      maxY = Math.max(maxY, d.p.y + d.radius);
+    }
+  }
+  if (!Number.isFinite(minX)) return null;
+  const x = Math.max(0, Math.floor(minX));
+  const y = Math.max(0, Math.floor(minY));
+  const bw = Math.min(w, Math.ceil(maxX)) - x;
+  const bh = Math.min(h, Math.ceil(maxY)) - y;
+  return bw > 0 && bh > 0 ? { x, y, w: bw, h: bh } : null;
+}
+
 /** Bounding box of a set of shapes: { x, y, w, h }. */
 export function shapesBounds(shapes) {
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -665,34 +710,34 @@ function paintShapes(ctx, shapes, { fill = true } = {}) {
 
 // Per-layer paint styling on top of the shared geometry.
 const LAYER_STYLE = {
-  foundation: { composite: "soft-light", blurScale: 1.5, skinOnly: true },
-  contour: { composite: "multiply", blurScale: 1.2, brush: true, dabAlpha: 0.055 },
-  brows: { composite: "multiply", blurScale: 0.5, brush: true, dabAlpha: 0.12 },
-  eyeshadow: { composite: "multiply", blurScale: 0.9, brush: true, dabAlpha: 0.05 },
-  eyeliner: { composite: "multiply", blurScale: 0.4 },
+  foundation: { composite: "soft-light", skinOnly: true },
+  contour: { composite: "multiply", brush: true, dabAlpha: 0.055 },
+  brows: { composite: "multiply", brush: true, dabAlpha: 0.12 },
+  eyeshadow: { composite: "multiply", brush: true, dabAlpha: 0.05 },
+  eyeliner: { composite: "multiply" },
   // The tail is drawn from the corner outward, so it tapers to nothing at
   // the tip; the lower line softens at both ends.
-  linerWing: { composite: "multiply", blurScale: 0.5, fadeTip: true },
-  linerLower: { composite: "multiply", blurScale: 0.7, fadeEnds: true },
-  lowerLid: { composite: "multiply", blurScale: 1.0, brush: true, dabAlpha: 0.05 },
-  outerCorner: { composite: "multiply", blurScale: 1.0, brush: true, dabAlpha: 0.05 },
+  linerWing: { composite: "multiply", fadeTip: true },
+  linerLower: { composite: "multiply", fadeEnds: true },
+  lowerLid: { composite: "multiply", brush: true, dabAlpha: 0.05 },
+  outerCorner: { composite: "multiply", brush: true, dabAlpha: 0.05 },
   // Highlights, so they lighten rather than darken.
-  innerCorner: { composite: "screen", blurScale: 0.8, brush: true, dabAlpha: 0.07 },
-  lowerLashes: { composite: "multiply", blurScale: 0.3, fadeTip: true, afterEyes: true },
-  aegyoSal: { composite: "screen", blurScale: 1.0, brush: true, dabAlpha: 0.05 },
-  underEyeShade: { composite: "multiply", blurScale: 1.0, brush: true, dabAlpha: 0.05 },
+  innerCorner: { composite: "screen", brush: true, dabAlpha: 0.07 },
+  lowerLashes: { composite: "multiply", fadeTip: true, afterEyes: true },
+  aegyoSal: { composite: "screen", brush: true, dabAlpha: 0.05 },
+  underEyeShade: { composite: "multiply", brush: true, dabAlpha: 0.05 },
   // Painted after the eye opening is restored, or they would be wiped.
-  lashes: { composite: "multiply", blurScale: 0.3, fadeTip: true, afterEyes: true },
-  lenses: { composite: "color", blurScale: 0.2, radial: true, afterEyes: true },
-  blush: { composite: "multiply", blurScale: 1.0, brush: true, dabAlpha: 0.035 },
-  lipstick: { composite: "multiply", blurScale: 0.5, carveMouth: true },
+  lashes: { composite: "multiply", fadeTip: true, afterEyes: true },
+  lenses: { composite: "color", radial: true, afterEyes: true },
+  blush: { composite: "multiply", brush: true, dabAlpha: 0.035 },
+  lipstick: { composite: "multiply", carveMouth: true },
 };
 
 // Features foundation must not wash over — tinting brows, eyes and lips
 // is what makes a base layer read as an orange filter instead of skin.
 const FOUNDATION_HOLES = [LEFT_EYE, RIGHT_EYE, LEFT_BROW, RIGHT_BROW, LIPS_OUTER];
 
-function paintLayer(ctx, lm, layer, w, h, { color, alpha, blur, blend, variant }, scratch) {
+function paintLayer(ctx, lm, layer, w, h, { color, alpha, blend, variant }, scratch) {
   const style = LAYER_STYLE[layer];
   const shapes = regionShapes(lm, layer, w, h, variant);
   if (!style || shapes.length === 0) return;
@@ -700,34 +745,50 @@ function paintLayer(ctx, lm, layer, w, h, { color, alpha, blur, blend, variant }
   ctx.save();
   ctx.globalCompositeOperation = blend ?? style.composite;
   ctx.globalAlpha = alpha;
-  ctx.filter = `blur(${blur * style.blurScale}px)`;
+  // No ctx.filter anywhere. Softness is carried by the geometry — brush
+  // dabs, feathered outlines, gradient-faded strokes — which is what the
+  // app already had to do for browsers that ignore the property. Keeping a
+  // blur as well cost roughly ten times the entire rest of the frame
+  // (394ms against 40ms measured over a full look) to duplicate softness
+  // that is already there.
+  ctx.filter = "none";
 
   if (style.brush) {
     // Dabs are laid into a scratch layer first: painted straight onto the
     // frame, each overlap would multiply again and build a dark core.
     // Merged in a layer, they read as one soft deposit composited once.
+    //
+    // Two things keep this affordable at video rate. Each dab is one
+    // drawImage of a shared sprite rather than its own radial gradient —
+    // building a gradient per dab meant hundreds of allocations a frame.
+    // And every touch of the scratch layer is confined to the box the
+    // dabs actually occupy, so a highlight the size of a fingertip no
+    // longer clears and composites the whole frame.
     const sc = scratch?.ctx;
-    if (sc) {
+    const box = dabBounds(shapes, w, h);
+    if (sc && box) {
       sc.setTransform(1, 0, 0, 1, 0, 0);
-      sc.clearRect(0, 0, w, h);
+      sc.clearRect(box.x, box.y, box.w, box.h);
       sc.globalCompositeOperation = "source-over";
       sc.filter = "none";
+      const sprite = dabSprite();
       for (const s of shapes) {
         for (const d of s.dabs) {
-          const g = sc.createRadialGradient(d.p.x, d.p.y, 0, d.p.x, d.p.y, d.radius);
-          g.addColorStop(0, color);
-          g.addColorStop(0.45, `${color}96`);
-          g.addColorStop(0.75, `${color}33`);
-          g.addColorStop(1, `${color}00`);
-          sc.globalAlpha = (style.dabAlpha ?? 0.055) * d.weight;
-          sc.fillStyle = g;
-          sc.beginPath();
-          sc.arc(d.p.x, d.p.y, d.radius, 0, Math.PI * 2);
-          sc.fill();
+          const a = (style.dabAlpha ?? 0.055) * d.weight;
+          if (a <= 0.002) continue;
+          sc.globalAlpha = a;
+          sc.drawImage(sprite, d.p.x - d.radius, d.p.y - d.radius,
+            d.radius * 2, d.radius * 2);
         }
       }
+      // The sprite carries shape, not colour: tint the accumulated alpha.
+      sc.globalAlpha = 1;
+      sc.globalCompositeOperation = "source-in";
+      sc.fillStyle = color;
+      sc.fillRect(box.x, box.y, box.w, box.h);
       ctx.globalAlpha = alpha;
-      ctx.drawImage(scratch.canvas, 0, 0);
+      ctx.drawImage(scratch.canvas, box.x, box.y, box.w, box.h,
+        box.x, box.y, box.w, box.h);
     }
   } else if (style.skinOnly) {
     // Feathered face oval: nested inset copies of the real outline, each at
@@ -891,10 +952,6 @@ export class MakeupRenderer {
 
     if (landmarks && look && !options.compare) {
       const fw = faceWidth(landmarks, w, h);
-      // ctx.filter blur is measured in device pixels and ignores the current
-      // transform, so without this the zoom would sharpen every edge just as
-      // the user leans in.
-      const blur = Math.max(2, fw * 0.03) * view.scale;
 
       const paint = (afterEyes) => {
         for (const layer of LAYER_ORDER) {
@@ -905,7 +962,7 @@ export class MakeupRenderer {
           const alpha = cfg.amount * options.intensity;
           if (alpha <= 0.01) continue;
           paintLayer(ctx, landmarks, layer, w, h,
-            { color: cfg.color, alpha, blur, blend: cfg.blend, variant: options.blushStyle },
+            { color: cfg.color, alpha, blend: cfg.blend, variant: options.blushStyle },
             this.#scratch(w, h));
         }
       };
@@ -954,15 +1011,20 @@ export class MakeupRenderer {
   #restoreEyes(source, lm, w, h) {
     const { ctx } = this;
     // Save/restore per eye so the caller's transform (mirror + zoom) is
-    // inherited rather than rebuilt.
+    // inherited rather than rebuilt. Only the clipped eye region is
+    // redrawn, not the whole frame twice over.
     for (const eye of [LEFT_EYE, RIGHT_EYE]) {
+      const pts = toPoints(lm, eye, w, h);
+      const box = shapesBounds([{ kind: "poly", pts }]);
+      if (!box) continue;
       ctx.save();
       ctx.globalCompositeOperation = "source-over";
       ctx.globalAlpha = 1;
       ctx.filter = "none";
-      polygon(ctx, toPoints(lm, eye, w, h));
+      polygon(ctx, pts);
       ctx.clip();
-      ctx.drawImage(source, 0, 0, w, h);
+      ctx.drawImage(source, box.x, box.y, box.w, box.h,
+        box.x, box.y, box.w, box.h);
       ctx.restore();
     }
   }

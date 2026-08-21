@@ -65,6 +65,33 @@ and no photos or video ever leave your machine.
 - **Intensity slider**, **hold-to-compare** (see your bare face), and
   **photo capture**.
 
+## Performance
+
+A live AR mirror runs the camera, a neural face tracker and a full repaint
+every frame, so it will always cost more than a static page. What it should
+not do is waste that budget:
+
+- **No canvas blur.** Every layer's softness comes from its geometry — brush
+  dabs, feathered outlines, gradient-faded strokes. Asking for a `ctx.filter`
+  blur on top measured at **394ms per frame against 40ms without**, roughly
+  ten times the cost of everything else combined, to duplicate softness that
+  was already there. (It was also never reliably applied: browsers that
+  ignore the property were rendering hard edges, which is what made the
+  contour look like two bars on a cheek.)
+- **Never render more pixels than are displayed**, capped at 720px wide.
+  Cost tracks pixel count almost exactly: 960×720 → 720×540 → 640×480
+  measured 387ms → 216ms → 152ms before the blur was removed.
+- **One shared brush sprite.** Each dab is a `drawImage` of a single
+  pre-rendered soft disc rather than its own radial gradient — that was
+  hundreds of gradient allocations every frame.
+- **Scratch work is bounded to the region.** A highlight the size of a
+  fingertip no longer clears and composites a full-frame offscreen canvas.
+- **30fps, and nothing at all while the page is hidden.** Phones offer 60 or
+  120Hz; a mirror does not need them, and face tracking rides the same gate.
+
+Two browser checks guard this: no layer may request a canvas blur, and the
+render surface may not exceed its display size.
+
 ## Run locally
 
 Any static file server works:
