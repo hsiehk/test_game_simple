@@ -33,12 +33,14 @@ and no photos or video ever leave your machine.
   teaching (eyes for liner and shadow, cheeks for blush, mouth for lips) and
   glides between them, with the reference photo's matching region pinned
   alongside so you can work close-up, part by part. Toggleable.
-- **The liner trace is measured, not assumed** — the tail's length, angle and
-  thickness are read off the reference photo by following the drawn line
-  outward from the outer corner as a ridge, so the guide overlays the liner
-  that is actually there rather than a fixed shape on the wearer's bare lash
-  line. A winking or blinking eye carries no readable liner, so it borrows
-  the open eye's measurement.
+- **Traces measured from the photo, not assumed** — the liner's tail (length,
+  angle, thickness), the brow's real outline, and where the aegyo-sal
+  highlight sits are all read off the reference image, so the guide overlays
+  what was actually drawn rather than a fixed shape on the wearer's own
+  features. Each falls back to the default shape when it cannot be read
+  confidently: a winking eye has no liner to measure, a bleached brow may
+  carry too little contrast, and a flatly lit cheek can hide the shadow that
+  bounds the aegyo-sal.
 - **The whole eye, taught in order** — lid wash, lower-lid colour (下眼皮铺色),
   outer-corner depth (眼尾), upper liner, tail, lower liner, inner-corner
   shimmer (眼头), aegyo-sal highlight (卧蚕) and the shading beneath it, then

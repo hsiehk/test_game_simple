@@ -224,6 +224,93 @@ if (process.env.SMOKE_FACE_IMAGE) {
     check("a winking eye borrows the open eye's measurement",
       winking.right !== null && winking.right?.a === winking.left?.a);
 
+    // Brow measurement: paint a bar of known thickness along the brow axis
+    // and check it is recovered. The mesh gives only a coarse ten-point
+    // loop, so a drawn or reshaped brow has to be read from the image.
+    const browFit = await page.evaluate(async () => {
+      const { measureBrows } = await import("./js/photolook.js");
+      const { LEFT_BROW } = await import("./js/landmarks.js");
+      const img = window.__app.state.photoImage;
+      const lm = window.__app.state.photoLandmarks;
+      const W = img.width, H = img.height;
+      const c = document.createElement("canvas");
+      c.width = W; c.height = H;
+      const x = c.getContext("2d");
+      x.drawImage(img, 0, 0);
+
+      const half = LEFT_BROW.length / 2;
+      const upper = LEFT_BROW.slice(0, half).map((i) => ({ x: lm[i].x * W, y: lm[i].y * H }));
+      const a = upper[0];
+      const b = upper[upper.length - 1];
+      const len = Math.hypot(b.x - a.x, b.y - a.y);
+      // Wipe the real brow first: painting over it would measure the union
+      // of the two and report the bar as twice its thickness.
+      x.fillStyle = "#cdaa96";
+      x.beginPath();
+      x.ellipse((a.x + b.x) / 2, (a.y + b.y) / 2, len * 0.75, len * 0.3,
+        Math.atan2(b.y - a.y, b.x - a.x), 0, Math.PI * 2);
+      x.fill();
+
+      const THICK = 0.09;               // as a fraction of brow length
+      x.strokeStyle = "#1a1410";
+      x.lineCap = "butt";
+      x.lineWidth = len * THICK;
+      x.beginPath();
+      x.moveTo(a.x, a.y);
+      x.lineTo(b.x, b.y);
+      x.stroke();
+
+      const fit = measureBrows(x.getImageData(0, 0, W, H), lm, W, H,
+        { r: 205, g: 175, b: 158 });
+      const cols = fit?.[0];
+      if (!cols) return { thickness: null };
+      const th = cols.map((col) => col.up + col.down).sort((p, q) => p - q);
+      return { drawn: THICK, thickness: th[th.length >> 1] };
+    });
+    check(`measured brow thickness matches what was drawn (${browFit.thickness?.toFixed(3)} vs 0.090)`,
+      browFit.thickness != null && Math.abs(browFit.thickness - browFit.drawn) <= 0.035);
+
+    // A brow with no contrast against skin cannot be traced; the mesh
+    // outline must be used rather than a shape invented from noise.
+    const flatBrow = await page.evaluate(async () => {
+      const { measureBrows } = await import("./js/photolook.js");
+      const { regionShapes } = await import("./js/makeup.js");
+      const { LEFT_BROW } = await import("./js/landmarks.js");
+      const lm = window.__app.state.photoLandmarks;
+      const W = 900, H = 700;
+      const c = document.createElement("canvas");
+      c.width = W; c.height = H;
+      const x = c.getContext("2d");
+      x.fillStyle = "#cdaa96";
+      x.fillRect(0, 0, W, H);
+      const fit = measureBrows(x.getImageData(0, 0, W, H), lm, W, H,
+        { r: 205, g: 170, b: 150 });
+      const shapes = regionShapes(lm, "brows", W, H, { brows: fit });
+      return { fit: fit?.[0] ?? null, drawn: shapes.length, dabs: shapes[0].dabs.length };
+    });
+    check("a brow with no contrast falls back to the mesh outline",
+      flatBrow.fit === null && flatBrow.drawn === 2 && flatBrow.dabs > 0);
+
+    // Aegyo-sal: the ridge is bounded to where it can anatomically sit, so
+    // a bright cheek cannot drag the band down the face.
+    const ridge = await page.evaluate(async () => {
+      const { measureAegyoSal } = await import("./js/photolook.js");
+      const img = window.__app.state.photoImage;
+      const lm = window.__app.state.photoLandmarks;
+      const c = document.createElement("canvas");
+      c.width = img.width; c.height = img.height;
+      c.getContext("2d").drawImage(img, 0, 0);
+      const fit = measureAegyoSal(
+        c.getContext("2d").getImageData(0, 0, img.width, img.height),
+        lm, img.width, img.height, { r: 205, g: 175, b: 158 });
+      return fit;
+    });
+    for (const [i, band] of (ridge ?? []).entries()) {
+      if (!band) continue;
+      check(`aegyo-sal band ${i} stays under the eye (${band.top.toFixed(2)}–${band.bottom.toFixed(2)} eye heights)`,
+        band.top >= 0.08 && band.bottom <= 0.95 && band.bottom > band.top);
+    }
+
     // Cost guards. Canvas blur was ~90% of the whole frame (394ms against
     // 40ms over a full look) and duplicated softness the geometry already
     // provides, so no layer may ask for one again. And the mirror must not

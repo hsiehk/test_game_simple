@@ -171,22 +171,59 @@ function contourBrush(lm, pair, cheekPair, w, h) {
  * head — filled-in brows that start sharply at the inner edge are the
  * giveaway of drawn-on brows.
  */
-function browBrush(lm, browIdx, w, h) {
+function browBrush(lm, browIdx, w, h, fit) {
   const half = browIdx.length / 2;
   const upper = toPoints(lm, browIdx.slice(0, half), w, h);
   // The loop's second half runs back the other way; reverse to pair it up.
   const lower = toPoints(lm, browIdx.slice(half), w, h).reverse();
+  const a = upper[0];
+  const b = upper[upper.length - 1];
+  const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+  const ux = (b.x - a.x) / len, uy = (b.y - a.y) / len;
+  const vx = uy, vy = -ux;
+
+  const along = (t) => {
+    const f = t * (upper.length - 1);
+    const i = Math.min(upper.length - 2, Math.floor(f));
+    const k = f - i;
+    return {
+      u: lerp(upper[i], upper[i + 1], k),
+      l: lerp(lower[i], lower[i + 1], k),
+    };
+  };
+
+  // A measured brow carries its own edges; without one, fall back to the
+  // mesh loop, which only approximates the shape.
+  const edges = (t) => {
+    if (fit?.length) {
+      let lo = fit[0], hi = fit[fit.length - 1];
+      for (let i = 0; i < fit.length - 1; i++) {
+        if (fit[i].t <= t && fit[i + 1].t >= t) { lo = fit[i]; hi = fit[i + 1]; break; }
+      }
+      const span = hi.t - lo.t || 1;
+      const k = Math.max(0, Math.min(1, (t - lo.t) / span));
+      const up = lo.up + (hi.up - lo.up) * k;
+      const down = lo.down + (hi.down - lo.down) * k;
+      const base = { x: a.x + ux * t * len, y: a.y + uy * t * len };
+      // Keep the measured band centred on the wearer's own brow line.
+      const meshMid = lerp(along(t).u, along(t).l, 0.5);
+      const drift = { x: meshMid.x - base.x, y: meshMid.y - base.y };
+      const proj = drift.x * vx + drift.y * vy;
+      const centreOffset = proj + (up - down) / 2 * len;
+      return {
+        centre: { x: base.x + vx * centreOffset, y: base.y + vy * centreOffset },
+        thickness: (up + down) * len,
+      };
+    }
+    const { u, l } = along(t);
+    return { centre: lerp(u, l, 0.5), thickness: Math.hypot(u.x - l.x, u.y - l.y) };
+  };
+
   const dabs = [];
   const steps = 16;
   for (let s = 0; s < steps; s++) {
     const t = s / (steps - 1);
-    const f = t * (upper.length - 1);
-    const i = Math.min(upper.length - 2, Math.floor(f));
-    const k = f - i;
-    const u = lerp(upper[i], upper[i + 1], k);
-    const l = lerp(lower[i], lower[i + 1], k);
-    const centre = lerp(u, l, 0.5);
-    const thickness = Math.hypot(u.x - l.x, u.y - l.y);
+    const { centre, thickness } = edges(t);
     dabs.push({
       p: centre,
       radius: Math.max(2, thickness * 0.62),
@@ -194,7 +231,15 @@ function browBrush(lm, browIdx, w, h) {
       weight: Math.sin(Math.PI * (0.1 + 0.9 * t)) ** 0.5,
     });
   }
-  return { kind: "brush", dabs, pts: toPoints(lm, browIdx, w, h), closed: true };
+  // Outline follows the same edges, so the trace matches what is painted.
+  const top = [], bottom = [];
+  for (let s = 0; s < steps; s++) {
+    const t = s / (steps - 1);
+    const { centre, thickness } = edges(t);
+    top.push({ x: centre.x + vx * thickness / 2, y: centre.y + vy * thickness / 2 });
+    bottom.push({ x: centre.x - vx * thickness / 2, y: centre.y - vy * thickness / 2 });
+  }
+  return { kind: "brush", dabs, pts: top.concat(bottom.reverse()), closed: true };
 }
 
 /**
@@ -252,9 +297,12 @@ function underEyeOffset(lm, lashIdx, lowerIdx, w, h, drop) {
  * lit rather than shaded. Highlighting it and shading beneath is what
  * gives the rounded, wide-eyed look in Korean tutorials.
  */
-function aegyoSalBrush(lm, lashIdx, lowerIdx, w, h) {
+function aegyoSalBrush(lm, lashIdx, lowerIdx, w, h, fit) {
   const lower = toPoints(lm, lowerIdx, w, h);
-  const below = underEyeOffset(lm, lashIdx, lowerIdx, w, h, 0.62);
+  const top = fit?.top ?? 0.16;
+  const bottom = fit?.bottom ?? 0.62;
+  const near = underEyeOffset(lm, lashIdx, lowerIdx, w, h, top);
+  const below = underEyeOffset(lm, lashIdx, lowerIdx, w, h, bottom);
   const fw = faceWidth(lm, w, h);
   const dabs = [];
   const rows = 3;
@@ -263,18 +311,18 @@ function aegyoSalBrush(lm, lashIdx, lowerIdx, w, h) {
     const u = i / (lower.length - 1);
     const edge = Math.sin(Math.PI * (0.1 + 0.8 * u));
     for (let j = 0; j < rows; j++) {
-      const t = 0.25 + (j / (rows - 1)) * 0.5;
+      const t = j / (rows - 1);
       dabs.push({
-        p: lerp(lower[i], below[i], t),
+        p: lerp(near[i], below[i], t),
         radius: fw * 0.028,
-        weight: edge * (1 - Math.abs(t - 0.45) * 1.1),
+        weight: edge * (1 - Math.abs(t - 0.5) * 0.9),
       });
     }
   }
   return {
     kind: "brush",
     dabs,
-    pts: lower.concat([...below].reverse()),
+    pts: near.concat([...below].reverse()),
     closed: true,
   };
 }
@@ -516,6 +564,8 @@ export function regionShapes(lm, layer, w, h, opts) {
   const o = typeof opts === "string" ? { blushStyle: opts } : (opts ?? {});
   const variant = o.blushStyle;
   const liner = o.liner;
+  const brows = o.brows;
+  const aegyo = o.aegyo;
   const linerWidth = (i, lashIdx, fallback) => (liner?.[i]?.thickness
     ? Math.max(1.2, eyeWidth(lm, lashIdx, w, h) * liner[i].thickness)
     : fallback);
@@ -525,8 +575,8 @@ export function regionShapes(lm, layer, w, h, opts) {
       return [{ kind: "poly", pts: toPoints(lm, FACE_OVAL, w, h) }];
     case "brows":
       return [
-        browBrush(lm, LEFT_BROW, w, h),
-        browBrush(lm, RIGHT_BROW, w, h),
+        browBrush(lm, LEFT_BROW, w, h, brows?.[0]),
+        browBrush(lm, RIGHT_BROW, w, h, brows?.[1]),
       ];
     case "eyeshadow":
       return [
@@ -554,8 +604,8 @@ export function regionShapes(lm, layer, w, h, opts) {
       ];
     case "aegyoSal":
       return [
-        aegyoSalBrush(lm, LEFT_LASH, LEFT_LOWER_LASH, w, h),
-        aegyoSalBrush(lm, RIGHT_LASH, RIGHT_LOWER_LASH, w, h),
+        aegyoSalBrush(lm, LEFT_LASH, LEFT_LOWER_LASH, w, h, aegyo?.[0]),
+        aegyoSalBrush(lm, RIGHT_LASH, RIGHT_LOWER_LASH, w, h, aegyo?.[1]),
       ];
     case "underEyeShade":
       return [
@@ -951,7 +1001,12 @@ export class MakeupRenderer {
     const w = canvas.width;
     const h = canvas.height;
 
-    const shapeOpts = { blushStyle: options.blushStyle, liner: look?.liner };
+    const shapeOpts = {
+      blushStyle: options.blushStyle,
+      liner: look?.liner,
+      brows: look?.browShape,
+      aegyo: look?.aegyoShape,
+    };
     const view = this.#updateView(landmarks, options.zoomLayer, w, h, shapeOpts);
 
     ctx.save();
@@ -977,8 +1032,7 @@ export class MakeupRenderer {
           const alpha = cfg.amount * options.intensity;
           if (alpha <= 0.01) continue;
           paintLayer(ctx, landmarks, layer, w, h,
-            { color: cfg.color, alpha, blend: cfg.blend,
-              variant: { blushStyle: options.blushStyle, liner: look.liner } },
+            { color: cfg.color, alpha, blend: cfg.blend, variant: shapeOpts },
             this.#scratch(w, h));
         }
       };

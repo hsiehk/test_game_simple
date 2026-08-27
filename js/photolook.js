@@ -13,7 +13,7 @@
 import { regionShapes, traceShape, shapesBounds } from "./makeup.js";
 import {
   LIPS_INNER, LEFT_IRIS, RIGHT_IRIS, LEFT_LASH, RIGHT_LASH,
-  LEFT_LOWER_LASH, RIGHT_LOWER_LASH,
+  LEFT_LOWER_LASH, RIGHT_LOWER_LASH, LEFT_BROW, RIGHT_BROW,
 } from "./landmarks.js";
 import { LAYER_ORDER } from "./looks.js";
 
@@ -260,6 +260,219 @@ export function measureLiner(imageData, lm, w, h, skin) {
   // side and a measured one on the other.
   const [left, right] = measured;
   return [left ?? right ?? null, right ?? left ?? null];
+}
+
+
+/**
+ * Shared scan helper: walk perpendicular from a point and report the run of
+ * pixels that satisfy `hit`, as offsets in the given unit.
+ */
+function runAlong(at, origin, vx, vy, unit, from, to, step, hit) {
+  let start = null, end = null;
+  for (let d = from; d <= to; d += step) {
+    const l = at(origin.x + vx * d * unit, origin.y + vy * d * unit);
+    if (l === null) continue;
+    if (hit(l)) {
+      if (start === null) start = d;
+      end = d;
+    } else if (start !== null) {
+      break;
+    }
+  }
+  return start === null ? null : { start, end };
+}
+
+/**
+ * Trace the brow actually drawn in a reference photo.
+ *
+ * The face mesh gives a coarse ten-point loop that only approximates a brow,
+ * and a filled or reshaped brow can sit well outside it — a straight Korean
+ * brow over a naturally arched one, say. So the hair itself is found by
+ * scanning up and down from the mesh axis, and its upper and lower edges are
+ * recorded in units of brow length so they transfer to another face.
+ *
+ * The threshold adapts to whatever contrast the photo actually has: bleached
+ * brows can sit only a few levels below skin, and a fixed cutoff finds
+ * nothing on them. Where there is too little contrast to be sure, this
+ * returns null and the mesh outline is used instead.
+ */
+export function measureBrows(imageData, lm, w, h, skin) {
+  if (!skin) return null;
+  const lum = (r, g, b) => 0.299 * r + 0.587 * g + 0.114 * b;
+  const skinLum = Math.max(lum(skin.r, skin.g, skin.b), 1);
+  const data = imageData.data;
+  const at = (x, y) => {
+    const xi = Math.round(x), yi = Math.round(y);
+    if (xi < 0 || yi < 0 || xi >= w || yi >= h) return null;
+    const i = (yi * w + xi) * 4;
+    return lum(data[i], data[i + 1], data[i + 2]);
+  };
+
+  return [LEFT_BROW, RIGHT_BROW].map((browIdx) => {
+    const half = browIdx.length / 2;
+    const upper = browIdx.slice(0, half).map((i) => ({ x: lm[i].x * w, y: lm[i].y * h }));
+    const lower = browIdx.slice(half).map((i) => ({ x: lm[i].x * w, y: lm[i].y * h })).reverse();
+    const a = upper[0];
+    const b = upper[upper.length - 1];
+    const len = Math.hypot(b.x - a.x, b.y - a.y);
+    if (len < 10) return null;
+    const ux = (b.x - a.x) / len, uy = (b.y - a.y) / len;
+    const vx = uy, vy = -ux;   // perpendicular, "up" relative to the brow
+
+    // How dark does this brow actually get? Sample the mesh centre line.
+    let darkest = skinLum;
+    for (let k = 0; k <= 10; k++) {
+      const t = k / 10;
+      const i = Math.min(upper.length - 2, Math.floor(t * (upper.length - 1)));
+      const f = t * (upper.length - 1) - i;
+      const cx = (upper[i].x + (upper[i + 1].x - upper[i].x) * f
+        + lower[i].x + (lower[i + 1].x - lower[i].x) * f) / 2;
+      const cy = (upper[i].y + (upper[i + 1].y - upper[i].y) * f
+        + lower[i].y + (lower[i + 1].y - lower[i].y) * f) / 2;
+      const l = at(cx, cy);
+      if (l !== null) darkest = Math.min(darkest, l);
+    }
+    const contrast = skinLum - darkest;
+    if (contrast < 12) return null;          // nothing reliably brow-shaped
+    const cut = skinLum - contrast * 0.45;
+
+    const cols = [];
+    for (let k = 0; k <= 12; k++) {
+      const t = k / 12;
+      const i = Math.min(upper.length - 2, Math.floor(t * (upper.length - 1)));
+      const f = t * (upper.length - 1) - i;
+      const origin = {
+        x: (upper[i].x + (upper[i + 1].x - upper[i].x) * f
+          + lower[i].x + (lower[i + 1].x - lower[i].x) * f) / 2,
+        y: (upper[i].y + (upper[i + 1].y - upper[i].y) * f
+          + lower[i].y + (lower[i + 1].y - lower[i].y) * f) / 2,
+      };
+      // A brow is thin against its own length. Letting the scan run further
+      // just walks it into the hair above, which is the same tone and often
+      // touching — that produced brows drawn across the hairline with
+      // spikes at the tail.
+      const REACH = 0.16;
+      const up = runAlong(at, origin, vx, vy, len, 0, REACH, 0.006, (l) => l < cut);
+      const down = runAlong(at, origin, -vx, -vy, len, 0, REACH, 0.006, (l) => l < cut);
+      if (!up && !down) continue;
+      cols.push({ t, up: up ? up.end : 0.01, down: down ? down.end : 0.01 });
+    }
+    if (cols.length < 6) return null;
+
+    // Smooth across columns and clip outliers: where the brow does touch
+    // the hair, one column runs away while its neighbours do not.
+    const median = (xs) => [...xs].sort((a, b) => a - b)[xs.length >> 1];
+    for (const key of ["up", "down"]) {
+      const mid = median(cols.map((c) => c[key]));
+      const cap = Math.max(mid * 1.6, 0.03);
+      for (const c of cols) c[key] = Math.min(c[key], cap);
+      const raw = cols.map((c) => c[key]);
+      cols.forEach((c, i) => {
+        c[key] = median([raw[Math.max(0, i - 1)], raw[i], raw[Math.min(raw.length - 1, i + 1)]]);
+      });
+    }
+    return cols;
+  });
+}
+
+/**
+ * Trace the aegyo-sal highlight in a reference photo — the lit ridge under
+ * the lower lashes. It is a bright band rather than a dark one, and how far
+ * it sits below the lashes and how deep it runs differ between looks, so
+ * both edges are measured in units of eye height.
+ */
+export function measureAegyoSal(imageData, lm, w, h, skin) {
+  if (!skin) return null;
+  const lum = (r, g, b) => 0.299 * r + 0.587 * g + 0.114 * b;
+  const skinLum = Math.max(lum(skin.r, skin.g, skin.b), 1);
+  const data = imageData.data;
+  const at = (x, y) => {
+    const xi = Math.round(x), yi = Math.round(y);
+    if (xi < 0 || yi < 0 || xi >= w || yi >= h) return null;
+    const i = (yi * w + xi) * 4;
+    return lum(data[i], data[i + 1], data[i + 2]);
+  };
+
+  const eyes = [[LEFT_LASH, LEFT_LOWER_LASH], [RIGHT_LASH, RIGHT_LOWER_LASH]];
+  return eyes.map(([lashIdx, lowerIdx]) => {
+    const pt = (i) => ({ x: lm[i].x * w, y: lm[i].y * h });
+    const mid = Math.floor(lashIdx.length / 2);
+    const upperMid = pt(lashIdx[mid]);
+    const lowerMid = pt(lowerIdx[mid]);
+    const eyeH = Math.hypot(upperMid.x - lowerMid.x, upperMid.y - lowerMid.y);
+    const outer = pt(lashIdx[0]);
+    const inner = pt(lashIdx[lashIdx.length - 1]);
+    const eyeW = Math.hypot(outer.x - inner.x, outer.y - inner.y);
+    if (eyeH < eyeW * 0.12) return null;    // eye closed: no ridge to read
+
+    // Downward direction, from the upper lid through the lower lid.
+    const dx = (lowerMid.x - upperMid.x) / eyeH;
+    const dy = (lowerMid.y - upperMid.y) / eyeH;
+
+    // Find the ridge as a peak in the brightness profile, not by comparing
+    // against the face's average skin. On a face lit for a photograph the
+    // whole under-eye reads brighter than that average, so an absolute
+    // threshold marches off down the cheek — it measured a band running
+    // 1.8 eye heights down on two of three references.
+    // The ridge is a few millimetres of fat directly under the lashes, so
+    // the search is bounded to where it can anatomically be. Given a whole
+    // cheek to look at, the brightest point is often the cheek highlight or
+    // the light on the cheekbone, and the band marches off down the face.
+    // What varies between looks — and so what is worth measuring — is where
+    // within this band the highlight actually sits.
+    const NEAR = 0.1, FAR = 0.85;
+    const profile = [];
+    for (let d = NEAR; d <= FAR; d += 0.02) {
+      const l = at(lowerMid.x + dx * d * eyeH, lowerMid.y + dy * d * eyeH);
+      if (l !== null) profile.push({ d, l });
+    }
+    if (profile.length < 8) return null;
+
+    let peak = profile[0];
+    for (const p of profile) if (p.l > peak.l) peak = p;
+    const floor = profile.reduce((m, p) => Math.min(m, p.l), Infinity);
+    if (peak.l - floor < 6) return null;      // flat: no ridge to trace
+    // Smooth first: single-pixel noise otherwise reads as a turning point.
+    const sm = profile.map((p, i, arr) => ({
+      d: p.d,
+      l: (arr[Math.max(0, i - 1)].l + p.l + arr[Math.min(arr.length - 1, i + 1)].l) / 3,
+    }));
+    const pi = sm.reduce((best, p, i) => (p.l > sm[best].l ? i : best), 0);
+
+    // The ridge ends at the shadow under it, not where brightness happens
+    // to fall to half. A cheek lit for a photo stays bright all the way
+    // down, so a half-maximum walk simply runs off the face.
+    const trough = (dir) => {
+      let i = pi;
+      let seen = sm[pi].l;
+      while (i + dir >= 0 && i + dir < sm.length) {
+        const next = sm[i + dir].l;
+        if (next < seen) { seen = next; i += dir; continue; }
+        // Turned back up: only a real dip counts as the edge.
+        if (sm[pi].l - seen > (peak.l - floor) * 0.2) return i;
+        i += dir;
+      }
+      return null;
+    };
+    const hiEdge = trough(1);
+    const loEdge = trough(-1);
+
+    // Where the ridge sits is measurable on any face with a highlight —
+    // that is the peak. How deep it runs needs the shadow beneath it, and
+    // under flat photographic lighting there often is not one. So the
+    // position always comes from the photo, and the depth falls back to a
+    // typical band when the lower edge cannot be seen.
+    const HALF = 0.17;
+    const top = loEdge !== null ? sm[loEdge].d : Math.max(NEAR, sm[pi].d - HALF);
+    const bottom = hiEdge !== null ? sm[hiEdge].d : sm[pi].d + HALF;
+    const t0 = Math.max(NEAR, top);
+    return {
+      top: t0,
+      // Never past FAR: the band cannot reach somewhere the search for it
+      // was not allowed to look.
+      bottom: Math.min(FAR, t0 + 0.45, Math.max(bottom, t0 + 0.2)),
+    };
+  });
 }
 
 // Per-layer application strength caps (a lip color can go bolder than a
@@ -515,6 +728,8 @@ export function buildPhotoLook(image, landmarks) {
 
   // Eyes: iris colour and how wide the iris sits relative to the eye.
   const liner = measureLiner(imageData, landmarks, w, h, skin);
+  const browShape = measureBrows(imageData, landmarks, w, h, skin);
+  const aegyoShape = measureAegyoSal(imageData, landmarks, w, h, skin);
   const iris = sampleLayer(imageData, landmarks, "lenses", w, h);
   const ratio = (irisRatio(landmarks, LEFT_IRIS, LEFT_LASH)
     + irisRatio(landmarks, RIGHT_IRIS, RIGHT_LASH)) / 2;
@@ -526,9 +741,11 @@ export function buildPhotoLook(image, landmarks) {
     description: "Colors and placement sampled from your uploaded reference photo. Follow the tutorial to recreate it — each step zooms the photo into the area being taught.",
     steps: PHOTO_STEPS.filter((s) => layers[s.layer]),
     layers,
-    // Liner geometry read off the photo, so the trace follows the line
-    // that was drawn rather than the wearer's bare lash line.
+    // Shapes read off the photo, so the trace follows what was actually
+    // drawn rather than a fixed form on the wearer's own features.
     liner,
+    browShape,
+    aegyoShape,
     // Observations the tutorial turns into advice, rather than paint.
     observed: { lashDrama: drama, eyes },
   };
