@@ -13,6 +13,7 @@
 import { regionShapes, traceShape, shapesBounds } from "./makeup.js";
 import {
   LIPS_INNER, LEFT_IRIS, RIGHT_IRIS, LEFT_LASH, RIGHT_LASH,
+  LEFT_LOWER_LASH, RIGHT_LOWER_LASH,
 } from "./landmarks.js";
 import { LAYER_ORDER } from "./looks.js";
 
@@ -130,6 +131,136 @@ export function highlightStrength(region, skin, { floor = 0.15, cap = 0.55 } = {
 }
 
 const HIGHLIGHT_LAYERS = new Set(["innerCorner", "aegyoSal"]);
+
+
+/**
+ * Measure the liner actually drawn in a reference photo, so the trace can
+ * follow it instead of the wearer's bare anatomy.
+ *
+ * Everything is expressed in the eye's own frame — outward along the
+ * corner-to-corner axis, and perpendicular to it — in units of eye width,
+ * so it transfers to a different face at a different size and head angle.
+ *
+ * The tail is found by walking outward from the outer corner in bands and
+ * stopping at the first band that is no longer mostly dark. Taking the
+ * farthest dark pixel instead would reach for a strand of hair; requiring
+ * the darkness to be continuous from the corner keeps it on the liner.
+ */
+export function measureLiner(imageData, lm, w, h, skin) {
+  if (!skin) return null;
+  const lum = (r, g, b) => 0.299 * r + 0.587 * g + 0.114 * b;
+  const skinLum = Math.max(lum(skin.r, skin.g, skin.b), 1);
+  const WING_DARK = skinLum * 0.55;
+  const LINE_DARK = skinLum * 0.45;
+  const data = imageData.data;
+  const at = (x, y) => {
+    const xi = Math.round(x);
+    const yi = Math.round(y);
+    if (xi < 0 || yi < 0 || xi >= w || yi >= h) return null;
+    const i = (yi * w + xi) * 4;
+    return lum(data[i], data[i + 1], data[i + 2]);
+  };
+
+  const eyes = [[LEFT_LASH, LEFT_LOWER_LASH], [RIGHT_LASH, RIGHT_LOWER_LASH]];
+  const measured = eyes.map(([lashIdx, lowerIdx]) => {
+    const pt = (i) => ({ x: lm[i].x * w, y: lm[i].y * h });
+    const outer = pt(lashIdx[0]);
+    const inner = pt(lashIdx[lashIdx.length - 1]);
+    const dx = outer.x - inner.x;
+    const dy = outer.y - inner.y;
+    const eyeW = Math.hypot(dx, dy);
+    if (eyeW < 8) return null;
+    const ux = dx / eyeW, uy = dy / eyeW;   // outward along the eye
+    const vx = uy, vy = -ux;                // perpendicular, upward
+
+    // A blinking or winking eye has no liner to read: the lid is folded
+    // over it and anything measured describes the fold. Say so rather than
+    // reporting a squashed shape as if it were the look.
+    const mid = Math.floor(lashIdx.length / 2);
+    const upperMid = pt(lashIdx[mid]);
+    const lowerMid = pt(lowerIdx[mid]);
+    const aperture = Math.hypot(upperMid.x - lowerMid.x, upperMid.y - lowerMid.y) / eyeW;
+    if (aperture < 0.12) return null;
+
+    // Follow the liner outward as a ridge: at each distance from the
+    // corner, find the darkest point across a narrow scan and step to it,
+    // requiring it to stay dark, stay near where it was, and stay narrow.
+    //
+    // Averaging darkness over a wide band fails in both directions — a
+    // thin tail is too small a fraction of the band to register, while a
+    // nearby mass of dark hair swamps it. The narrowness test is what
+    // separates a drawn line from hair: a liner is a line, hair is a wall.
+    const STEP = 0.03, REACH = 0.9, SPAN = 0.35, JUMP = 0.12, MAX_WIDTH = 0.3;
+    const START = 0.08;
+    let tipA = 0, tipB = 0, bPrev = null, darkest = Infinity;
+    for (let a = START; a <= REACH; a += STEP) {
+      const ax = outer.x + ux * a * eyeW;
+      const ay = outer.y + uy * a * eyeW;
+      let bestB = null, bestL = Infinity;
+      for (let b = -SPAN; b <= SPAN; b += 0.01) {
+        // The first step seeds the track; later ones must stay near it.
+        if (bPrev !== null && Math.abs(b - bPrev) > JUMP) continue;
+        const l = at(ax + vx * b * eyeW, ay + vy * b * eyeW);
+        if (l !== null && l < bestL) { bestL = l; bestB = b; }
+      }
+      if (bestB === null || bestL > WING_DARK) break;
+      // A tail fades toward its tip, but it does not become skin. Once the
+      // track is closer in tone to skin than to the darkest liner seen so
+      // far, the line has ended and this is something else — the socket's
+      // shadow, a lash, a strand of hair — so stop rather than run on.
+      darkest = Math.min(darkest, bestL);
+      if (bestL > darkest + (WING_DARK - darkest) * 0.6) break;
+
+      // How wide is the dark run through that point? A wall is not a line.
+      let width = 0;
+      for (const dir of [-1, 1]) {
+        for (let k = 1; k <= 40; k++) {
+          const b = bestB + dir * k * 0.01;
+          const l = at(ax + vx * b * eyeW, ay + vy * b * eyeW);
+          if (l === null || l > WING_DARK) break;
+          width += 0.01;
+        }
+      }
+      // Close to the corner the lashes and the eye itself are one dark
+      // mass, so only judge width once the track is clear of them.
+      if (a > 0.18 && width > MAX_WIDTH) break;
+
+      tipA = a;
+      tipB = bestB;
+      bPrev = bestB;
+    }    // Thickness of the line itself, sampled along the lash line.
+    const thicks = [];
+    for (const f of [0.25, 0.45, 0.65]) {
+      const base = {
+        x: outer.x - ux * eyeW * f,
+        y: outer.y - uy * eyeW * f,
+      };
+      let t = 0;
+      for (let step = 0; step < 24; step++) {
+        const d = (step / 24) * 0.22 * eyeW;
+        const l = at(base.x + vx * d, base.y + vy * d);
+        if (l === null || l > LINE_DARK) break;
+        t = d / eyeW;
+      }
+      thicks.push(t);
+    }
+    thicks.sort((p, q) => p - q);
+
+    return {
+      // No wing found: fall back to the default shape rather than draw a stub.
+      // Anything shorter than this is the corner of the eye, not a tail.
+      a: tipA > 0.12 ? Math.min(tipA, REACH) : null,
+      b: tipA > 0.12 ? Math.max(-SPAN, Math.min(SPAN, tipB)) : null,
+      thickness: Math.max(0.008, Math.min(0.09, thicks[1])),
+    };
+  });
+
+  // Faces are near enough symmetric: if only one eye was readable, use its
+  // measurement for both rather than falling back to a generic tail on one
+  // side and a measured one on the other.
+  const [left, right] = measured;
+  return [left ?? right ?? null, right ?? left ?? null];
+}
 
 // Per-layer application strength caps (a lip color can go bolder than a
 // full-face contour without looking painted on).
@@ -383,6 +514,7 @@ export function buildPhotoLook(image, landmarks) {
   }
 
   // Eyes: iris colour and how wide the iris sits relative to the eye.
+  const liner = measureLiner(imageData, landmarks, w, h, skin);
   const iris = sampleLayer(imageData, landmarks, "lenses", w, h);
   const ratio = (irisRatio(landmarks, LEFT_IRIS, LEFT_LASH)
     + irisRatio(landmarks, RIGHT_IRIS, RIGHT_LASH)) / 2;
@@ -394,6 +526,9 @@ export function buildPhotoLook(image, landmarks) {
     description: "Colors and placement sampled from your uploaded reference photo. Follow the tutorial to recreate it — each step zooms the photo into the area being taught.",
     steps: PHOTO_STEPS.filter((s) => layers[s.layer]),
     layers,
+    // Liner geometry read off the photo, so the trace follows the line
+    // that was drawn rather than the wearer's bare lash line.
+    liner,
     // Observations the tutorial turns into advice, rather than paint.
     observed: { lashDrama: drama, eyes },
   };
