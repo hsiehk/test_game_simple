@@ -255,11 +255,9 @@ export function measureLiner(imageData, lm, w, h, skin) {
     };
   });
 
-  // Faces are near enough symmetric: if only one eye was readable, use its
-  // measurement for both rather than falling back to a generic tail on one
-  // side and a measured one on the other.
-  const [left, right] = measured;
-  return [left ?? right ?? null, right ?? left ?? null];
+  // A tail cannot be twice as long on one side; where it reads that way,
+  // the longer side has run onto something dark that is not liner.
+  return reconcilePair(measured, (m) => m.a ?? 0, 2);
 }
 
 
@@ -308,7 +306,7 @@ export function measureBrows(imageData, lm, w, h, skin) {
     return lum(data[i], data[i + 1], data[i + 2]);
   };
 
-  return [LEFT_BROW, RIGHT_BROW].map((browIdx) => {
+  const measured = [LEFT_BROW, RIGHT_BROW].map((browIdx) => {
     const half = browIdx.length / 2;
     const upper = browIdx.slice(0, half).map((i) => ({ x: lm[i].x * w, y: lm[i].y * h }));
     const lower = browIdx.slice(half).map((i) => ({ x: lm[i].x * w, y: lm[i].y * h })).reverse();
@@ -317,7 +315,12 @@ export function measureBrows(imageData, lm, w, h, skin) {
     const len = Math.hypot(b.x - a.x, b.y - a.y);
     if (len < 10) return null;
     const ux = (b.x - a.x) / len, uy = (b.y - a.y) / len;
-    const vx = uy, vy = -ux;   // perpendicular, "up" relative to the brow
+    // Perpendicular, oriented toward the forehead on both sides. The two
+    // brows run in opposite directions, so the raw perpendicular points up
+    // on one and down on the other — and a measurement handed from one side
+    // to the other would arrive upside down.
+    let vx = uy, vy = -ux;
+    if (vy > 0) { vx = -vx; vy = -vy; }
 
     // How dark does this brow actually get? Sample the mesh centre line.
     let darkest = skinLum;
@@ -373,6 +376,9 @@ export function measureBrows(imageData, lm, w, h, skin) {
     }
     return cols;
   });
+  // A brow is not half again as thick on one side; where it reads that way,
+  // the thicker side has run into the hair beside it.
+  return reconcilePair(measured, browThickness, 1.6);
 }
 
 /**
@@ -394,7 +400,7 @@ export function measureAegyoSal(imageData, lm, w, h, skin) {
   };
 
   const eyes = [[LEFT_LASH, LEFT_LOWER_LASH], [RIGHT_LASH, RIGHT_LOWER_LASH]];
-  return eyes.map(([lashIdx, lowerIdx]) => {
+  const measured = eyes.map(([lashIdx, lowerIdx]) => {
     const pt = (i) => ({ x: lm[i].x * w, y: lm[i].y * h });
     const mid = Math.floor(lashIdx.length / 2);
     const upperMid = pt(lashIdx[mid]);
@@ -473,6 +479,45 @@ export function measureAegyoSal(imageData, lm, w, h, skin) {
       bottom: Math.min(FAR, t0 + 0.45, Math.max(bottom, t0 + 0.2)),
     };
   });
+  // A ridge twice as deep on one side is the cheek being read, not the eye.
+  return reconcilePair(measured, (m) => m.bottom - m.top, 2);
+}
+
+
+/**
+ * Reconcile a pair of measurements across the two sides of a face.
+ *
+ * Makeup is applied to match, so where one side cannot be read the other
+ * is a better guide than a generic default. Two things go wrong, and they
+ * are distinguishable: something covering a feature — hair, a turned head,
+ * a closed lid — removes signal and yields nothing, while something
+ * touching a feature, like hair meeting the brow, adds dark pixels and
+ * inflates the measurement. So a missing side borrows, and a side
+ * suspiciously larger than its partner is treated as contaminated and
+ * borrows too.
+ *
+ * `size` reduces a measurement to one comparable number; `ratio` is how
+ * much larger than its partner a side may be before it is disbelieved.
+ */
+export function reconcilePair(pair, size, ratio) {
+  if (!pair) return pair;
+  const [a, b] = pair;
+  if (!a && !b) return [null, null];
+  if (!a) return [b, b];
+  if (!b) return [a, a];
+  const sa = size(a);
+  const sb = size(b);
+  if (!(sa > 0) || !(sb > 0)) return [a, b];
+  if (sa > sb * ratio) return [b, b];
+  if (sb > sa * ratio) return [a, a];
+  return [a, b];
+}
+
+const medianOf = (xs) => [...xs].sort((p, q) => p - q)[xs.length >> 1];
+
+/** Median thickness of a measured brow, for comparing the two sides. */
+export function browThickness(cols) {
+  return cols?.length ? medianOf(cols.map((c) => c.up + c.down)) : 0;
 }
 
 // Per-layer application strength caps (a lip color can go bolder than a
