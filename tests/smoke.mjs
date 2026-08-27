@@ -159,6 +159,71 @@ if (process.env.SMOKE_FACE_IMAGE) {
     await page.click("#next-step");
     check("photo tutorial advances", (await page.locator("#step-counter").textContent()).includes("Step 2"));
 
+    // Liner measurement accuracy: paint a tail of known length and angle
+    // onto the reference face, in the eye's own frame, and check the
+    // measurement recovers it. Without this the wing is a fixed stub that
+    // ignores whatever liner the reference actually wears.
+    const linerFit = await page.evaluate(async () => {
+      const { measureLiner } = await import("./js/photolook.js");
+      const { LEFT_LASH } = await import("./js/landmarks.js");
+      const img = window.__app.state.photoImage;
+      const lm = window.__app.state.photoLandmarks;
+      const W = img.width, H = img.height;
+      const c = document.createElement("canvas");
+      c.width = W; c.height = H;
+      const x = c.getContext("2d");
+      x.drawImage(img, 0, 0);
+
+      const pt = (i) => ({ x: lm[i].x * W, y: lm[i].y * H });
+      const outer = pt(LEFT_LASH[0]);
+      const inner = pt(LEFT_LASH[LEFT_LASH.length - 1]);
+      const dx = outer.x - inner.x, dy = outer.y - inner.y;
+      const eyeW = Math.hypot(dx, dy);
+      const ux = dx / eyeW, uy = dy / eyeW;
+      const vx = uy, vy = -ux;
+      const A = 0.4, B = 0.1;           // the tail we are about to draw
+      const tip = {
+        x: outer.x + ux * A * eyeW + vx * B * eyeW,
+        y: outer.y + uy * A * eyeW + vy * B * eyeW,
+      };
+      x.strokeStyle = "#000";
+      x.lineCap = "round";
+      x.lineWidth = eyeW * 0.03;
+      x.beginPath();
+      x.moveTo(outer.x, outer.y);
+      x.lineTo(tip.x, tip.y);
+      x.stroke();
+
+      const skin = { r: 200, g: 170, b: 155 };
+      const fit = measureLiner(x.getImageData(0, 0, W, H), lm, W, H, skin);
+      return { drawn: { a: A, b: B }, got: fit[0] };
+    });
+    check(`measured wing length matches what was drawn (${linerFit.got?.a?.toFixed(2)} vs 0.40)`,
+      linerFit.got?.a != null && Math.abs(linerFit.got.a - linerFit.drawn.a) <= 0.12);
+    check(`measured wing angle matches what was drawn (${linerFit.got?.b?.toFixed(2)} vs 0.10)`,
+      linerFit.got?.b != null && Math.abs(linerFit.got.b - linerFit.drawn.b) <= 0.08);
+
+    // A closed eye carries no readable liner; it must borrow the open one
+    // rather than report the shape of a folded lid.
+    const winking = await page.evaluate(async () => {
+      const { measureLiner } = await import("./js/photolook.js");
+      const { RIGHT_LASH, RIGHT_LOWER_LASH } = await import("./js/landmarks.js");
+      const img = window.__app.state.photoImage;
+      const lm = window.__app.state.photoLandmarks.map((p) => ({ ...p }));
+      // Collapse the right eye onto its own lash line.
+      for (let i = 0; i < RIGHT_LASH.length; i++) {
+        lm[RIGHT_LOWER_LASH[i]] = { ...lm[RIGHT_LASH[i]] };
+      }
+      const c = document.createElement("canvas");
+      c.width = img.width; c.height = img.height;
+      c.getContext("2d").drawImage(img, 0, 0);
+      const fit = measureLiner(c.getContext("2d").getImageData(0, 0, img.width, img.height),
+        lm, img.width, img.height, { r: 200, g: 170, b: 155 });
+      return { left: fit[0], right: fit[1] };
+    });
+    check("a winking eye borrows the open eye's measurement",
+      winking.right !== null && winking.right?.a === winking.left?.a);
+
     // Cost guards. Canvas blur was ~90% of the whole frame (394ms against
     // 40ms over a full look) and duplicated softness the geometry already
     // provides, so no layer may ask for one again. And the mirror must not

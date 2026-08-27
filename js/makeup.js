@@ -85,22 +85,26 @@ function shadowBand(landmarks, lashIdx, browIdx, w, h, reach) {
 // downward as it leaves the corner, so a lift is applied to bring the tail
 // back to roughly level — extended and soft rather than flicked up or
 // dragged down.
-function outerWing(lm, lashIdx, w, h) {
+function outerWing(lm, lashIdx, w, h, fit) {
   const pts = toPoints(lm, lashIdx, w, h);
   const outer = pts[0];
-  const along = pts[3] ?? pts[1];
-  const dx = outer.x - along.x;
-  const dy = outer.y - along.y;
-  const len = Math.hypot(dx, dy) || 1;
-  const eyeW = Math.hypot(outer.x - pts[pts.length - 1].x, outer.y - pts[pts.length - 1].y);
-  const reach = eyeW * 0.3;
-  return [
-    outer,
-    {
-      x: outer.x + (dx / len) * reach,
-      y: outer.y + (dy / len) * reach - eyeW * 0.09,
-    },
-  ];
+  const inner = pts[pts.length - 1];
+  const dx = outer.x - inner.x;
+  const dy = outer.y - inner.y;
+  const eyeW = Math.hypot(dx, dy) || 1;
+  const ux = dx / eyeW, uy = dy / eyeW;   // outward along the eye
+  const vx = uy, vy = -ux;                // perpendicular, upward
+  // Measured off a reference photo when there is one; otherwise a short,
+  // near-level tail that suits most eyes.
+  const a = (fit?.a ?? 0.3) * eyeW;
+  const b = (fit?.b ?? 0.09) * eyeW;
+  return [outer, { x: outer.x + ux * a + vx * b, y: outer.y + uy * a + vy * b }];
+}
+
+/** Eye width, used to scale liner thickness measured off a photo. */
+function eyeWidth(lm, lashIdx, w, h) {
+  const pts = toPoints(lm, lashIdx, w, h);
+  return Math.hypot(pts[0].x - pts[pts.length - 1].x, pts[0].y - pts[pts.length - 1].y) || 1;
 }
 
 // Lower liner is flattering along the outer half only; running it into the
@@ -508,7 +512,13 @@ function irisDisc(lm, irisIdx, w, h) {
  * Shared by the live-view painters, the tutorial highlight, and the
  * reference-photo zoom/trace overlay, so all three always agree.
  */
-export function regionShapes(lm, layer, w, h, variant) {
+export function regionShapes(lm, layer, w, h, opts) {
+  const o = typeof opts === "string" ? { blushStyle: opts } : (opts ?? {});
+  const variant = o.blushStyle;
+  const liner = o.liner;
+  const linerWidth = (i, lashIdx, fallback) => (liner?.[i]?.thickness
+    ? Math.max(1.2, eyeWidth(lm, lashIdx, w, h) * liner[i].thickness)
+    : fallback);
   const fw = faceWidth(lm, w, h);
   switch (layer) {
     case "foundation":
@@ -525,13 +535,17 @@ export function regionShapes(lm, layer, w, h, variant) {
       ];
     case "eyeliner":
       return [
-        { kind: "line", pts: toPoints(lm, LEFT_LASH, w, h), width: Math.max(1.5, fw * 0.012) },
-        { kind: "line", pts: toPoints(lm, RIGHT_LASH, w, h), width: Math.max(1.5, fw * 0.012) },
+        { kind: "line", pts: toPoints(lm, LEFT_LASH, w, h),
+          width: linerWidth(0, LEFT_LASH, Math.max(1.5, fw * 0.012)) },
+        { kind: "line", pts: toPoints(lm, RIGHT_LASH, w, h),
+          width: linerWidth(1, RIGHT_LASH, Math.max(1.5, fw * 0.012)) },
       ];
     case "linerWing":
       return [
-        { kind: "line", pts: outerWing(lm, LEFT_LASH, w, h), width: Math.max(1.5, fw * 0.013) },
-        { kind: "line", pts: outerWing(lm, RIGHT_LASH, w, h), width: Math.max(1.5, fw * 0.013) },
+        { kind: "line", pts: outerWing(lm, LEFT_LASH, w, h, liner?.[0]),
+          width: linerWidth(0, LEFT_LASH, Math.max(1.5, fw * 0.013)) },
+        { kind: "line", pts: outerWing(lm, RIGHT_LASH, w, h, liner?.[1]),
+          width: linerWidth(1, RIGHT_LASH, Math.max(1.5, fw * 0.013)) },
       ];
     case "linerLower":
       return [
@@ -907,11 +921,11 @@ export class MakeupRenderer {
   }
 
   /** Ease the live view toward the step's target region. */
-  #updateView(landmarks, zoomLayer, w, h, blushStyle) {
+  #updateView(landmarks, zoomLayer, w, h, fit) {
     const identity = { cx: w / 2, cy: h / 2, scale: 1 };
     let target = identity;
     if (landmarks && zoomLayer) {
-      target = zoomTargetFor(landmarks, zoomLayer, w, h, { variant: blushStyle }) ?? identity;
+      target = zoomTargetFor(landmarks, zoomLayer, w, h, { variant: fit }) ?? identity;
     }
     if (!this.view) {
       this.view = { ...target };
@@ -937,7 +951,8 @@ export class MakeupRenderer {
     const w = canvas.width;
     const h = canvas.height;
 
-    const view = this.#updateView(landmarks, options.zoomLayer, w, h, options.blushStyle);
+    const shapeOpts = { blushStyle: options.blushStyle, liner: look?.liner };
+    const view = this.#updateView(landmarks, options.zoomLayer, w, h, shapeOpts);
 
     ctx.save();
     // Mirror for selfie view, then frame the region being taught.
@@ -962,7 +977,8 @@ export class MakeupRenderer {
           const alpha = cfg.amount * options.intensity;
           if (alpha <= 0.01) continue;
           paintLayer(ctx, landmarks, layer, w, h,
-            { color: cfg.color, alpha, blend: cfg.blend, variant: options.blushStyle },
+            { color: cfg.color, alpha, blend: cfg.blend,
+              variant: { blushStyle: options.blushStyle, liner: look.liner } },
             this.#scratch(w, h));
         }
       };
@@ -982,7 +998,7 @@ export class MakeupRenderer {
       if (options.highlightLayer) {
         this.#drawHighlight(
           landmarks, options.highlightLayer, w, h, fw, options.time ?? 0, view.scale,
-          options.blushStyle,
+          shapeOpts,
         );
       }
     }
