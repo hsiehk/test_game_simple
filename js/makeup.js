@@ -180,7 +180,9 @@ function browBrush(lm, browIdx, w, h, fit) {
   const b = upper[upper.length - 1];
   const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
   const ux = (b.x - a.x) / len, uy = (b.y - a.y) / len;
-  const vx = uy, vy = -ux;
+  // Toward the forehead on both sides; see measureBrows.
+  let vx = uy, vy = -ux;
+  if (vy > 0) { vx = -vx; vy = -vy; }
 
   const along = (t) => {
     const f = t * (upper.length - 1);

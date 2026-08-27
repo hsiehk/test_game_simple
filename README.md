@@ -41,6 +41,13 @@ and no photos or video ever leave your machine.
   confidently: a winking eye has no liner to measure, a bleached brow may
   carry too little contrast, and a flatly lit cheek can hide the shadow that
   bounds the aegyo-sal.
+- **The two sides check each other** — makeup is applied to match, so where
+  one side cannot be read the other stands in. The two failures are
+  distinguishable: something covering a feature (hair, a turned head, a
+  closed lid) removes signal and yields nothing, while something touching a
+  feature adds dark pixels and inflates the measurement. A missing side
+  borrows, and a side suspiciously larger than its partner is disbelieved and
+  borrows too. Genuine asymmetry within tolerance is kept.
 - **The whole eye, taught in order** — lid wash, lower-lid colour (下眼皮铺色),
   outer-corner depth (眼尾), upper liner, tail, lower liner, inner-corner
   shimmer (眼头), aegyo-sal highlight (卧蚕) and the shading beneath it, then
