@@ -402,6 +402,52 @@ function blob(centre, radius, weight, fw) {
   return dabs;
 }
 
+/**
+ * Outline of a loose cluster of dabs: the convex hull of the discs
+ * themselves, not of their centres.
+ *
+ * A product laid down as scattered blobs — blush, a corner deposit — has no
+ * path running through it, so there is nothing to trace the way a brow or a
+ * lash line can be traced. Joining the dab centres produces a zigzag around
+ * the inside of the cluster, which is what made these regions look like a
+ * knot of circles. The hull is the edge of the deposit, which is what the
+ * wearer is being asked to fill in.
+ */
+function dabHull(dabs) {
+  const pts = [];
+  const ring = 8;
+  for (const d of dabs) {
+    // The dab sprite fades to nothing at its radius, so the visible edge
+    // sits inside it; tracing the full radius would outline empty skin.
+    const r = d.radius * 0.72;
+    for (let k = 0; k < ring; k++) {
+      const a = (k / ring) * Math.PI * 2;
+      pts.push({ x: d.p.x + Math.cos(a) * r, y: d.p.y + Math.sin(a) * r });
+    }
+  }
+  return convexHull(pts);
+}
+
+/** Andrew's monotone chain, counter-clockwise, no collinear points. */
+function convexHull(pts) {
+  if (pts.length < 3) return pts.slice();
+  const sorted = pts.slice().sort((a, b) => a.x - b.x || a.y - b.y);
+  const cross = (o, a, b) =>
+    (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+  const chain = (src) => {
+    const out = [];
+    for (const p of src) {
+      while (out.length >= 2
+        && cross(out[out.length - 2], out[out.length - 1], p) <= 0) out.pop();
+      out.push(p);
+    }
+    out.pop();
+    return out;
+  };
+  const hull = chain(sorted).concat(chain(sorted.reverse()));
+  return hull.length >= 3 ? hull : pts.slice();
+}
+
 function smear(from, to, radius, weight, fw, steps = 5) {
   const dabs = [];
   for (let i = 0; i < steps; i++) {
@@ -419,14 +465,15 @@ function smear(from, to, radius, weight, fw, steps = 5) {
 function blushBrush(lm, style, w, h) {
   const fw = faceWidth(lm, w, h);
   const cheeks = [
-    { pair: LEFT_CHEEK, temple: LEFT_TEMPLE, lash: LEFT_LASH, lower: LEFT_LOWER_LASH },
-    { pair: RIGHT_CHEEK, temple: RIGHT_TEMPLE, lash: RIGHT_LASH, lower: RIGHT_LOWER_LASH },
+    { side: "left", pair: LEFT_CHEEK, temple: LEFT_TEMPLE, lash: LEFT_LASH, lower: LEFT_LOWER_LASH },
+    { side: "right", pair: RIGHT_CHEEK, temple: RIGHT_TEMPLE, lash: RIGHT_LASH, lower: RIGHT_LOWER_LASH },
   ];
   const bridge = px(lm, NOSE_BRIDGE, w, h);
   const tip = px(lm, NOSE_TIP, w, h);
-  const dabs = [];
+  const out = [];
 
   for (const c of cheeks) {
+    const dabs = [];
     const apple = cheekCenter(lm, c.pair, w, h);
     const temple = px(lm, c.temple, w, h);
     const underEye = underEyeOffset(lm, c.lash, c.lower, w, h, 1.5);
@@ -465,12 +512,18 @@ function blushBrush(lm, style, w, h) {
         dabs.push(...blob(apple, fw * 0.105, 1, fw));
         break;
     }
+    out.push({ kind: "brush", dabs, pts: dabHull(dabs), closed: true, side: c.side });
   }
 
-  if (style === "cheekbones") dabs.push(...blob(tip, fw * 0.035, 0.5, fw));
-  if (style === "sunkissed") dabs.push(...blob(lerp(bridge, tip, 0.8), fw * 0.055, 0.7, fw));
+  // The placements that carry on over the nose put colour on neither cheek.
+  const centre = [];
+  if (style === "cheekbones") centre.push(...blob(tip, fw * 0.035, 0.5, fw));
+  if (style === "sunkissed") centre.push(...blob(lerp(bridge, tip, 0.8), fw * 0.055, 0.7, fw));
+  if (centre.length) {
+    out.push({ kind: "brush", dabs: centre, pts: dabHull(centre), closed: true });
+  }
 
-  return [{ kind: "brush", dabs, pts: dabs.map((d) => d.p) }];
+  return out;
 }
 
 /** Shimmer at the inner corner (眼头) — what opens the eye inward. */
@@ -483,21 +536,88 @@ function innerCornerBrush(lm, lashIdx, w, h) {
   const dy = inner.y - along.y;
   const len = Math.hypot(dx, dy) || 1;
   const centre = { x: inner.x + (dx / len) * fw * 0.012, y: inner.y + (dy / len) * fw * 0.006 };
-  return { kind: "brush", dabs: blob(centre, fw * 0.028, 1, fw), pts: [centre] };
+  const dabs = blob(centre, fw * 0.028, 1, fw);
+  return { kind: "brush", dabs, pts: dabHull(dabs), closed: true };
 }
 
-/** Depth wrapped around the outer corner (眼尾), lid and lower lid together. */
+/**
+ * Depth wrapped around the outer corner (眼尾): a wedge anchored just past
+ * the corner, opening across both lash lines and fading inward.
+ *
+ * The outline is built first and the dabs are laid inside it, rather than
+ * the outline being recovered from the dabs afterward. Depth here used to
+ * be three loose blobs whose trace ran through their centres — which drew
+ * a zigzag between the brush marks instead of a boundary around them, and
+ * read on-screen as a bunch of circles at the corner of the eye.
+ */
 function outerCornerBrush(lm, lashIdx, lowerIdx, w, h) {
   const lash = toPoints(lm, lashIdx, w, h);
   const lower = toPoints(lm, lowerIdx, w, h);
-  const fw = faceWidth(lm, w, h);
   const outer = lash[0];
-  const dabs = [
-    ...blob(outer, fw * 0.045, 1, fw),
-    ...blob(lerp(lash[0], lash[2], 0.7), fw * 0.038, 0.8, fw),
-    ...blob(lerp(lower[0], lower[2], 0.7), fw * 0.036, 0.75, fw),
-  ];
-  return { kind: "brush", dabs, pts: dabs.map((d) => d.p) };
+  const inner = lash[lash.length - 1];
+  const eyeW = Math.hypot(inner.x - outer.x, inner.y - outer.y) || 1;
+  const ux = (outer.x - inner.x) / eyeW, uy = (outer.y - inner.y) / eyeW; // outward
+  // "Up" taken from the eye opening itself, so the wedge tips with the eye
+  // rather than with the image.
+  const midU = lash[Math.floor(lash.length / 2)];
+  const midL = lower[Math.floor(lower.length / 2)];
+  const vlen = Math.hypot(midU.x - midL.x, midU.y - midL.y) || 1;
+  const vx = (midU.x - midL.x) / vlen, vy = (midU.y - midL.y) / vlen;
+
+  const REACH = 0.42;  // how far in along the eye the depth carries
+  const PAST = 0.09;   // and how far past the corner it sits
+  const UP = 0.30;     // above the lash line at the corner, in eye widths
+  const DOWN = 0.20;   // and below the lower lash line
+
+  const at = (pts, s) => {
+    const f = s * REACH * (pts.length - 1);
+    const i = Math.min(pts.length - 2, Math.floor(f));
+    return lerp(pts[i], pts[i + 1], f - i);
+  };
+
+  // Depth laid on with a small brush is widest just inside the corner, not
+  // at its very point, and it dies away to nothing rather than stopping.
+  // A profile that peaks a fifth of the way in rounds the outer end; the
+  // two edges are drawn onto the eye's own midline as they run inward, so
+  // the shape closes to a point instead of a wall across the eye.
+  const profile = (s) => (1 - s) ** 1.1 * (1 - 0.4 * Math.exp(-((s / 0.18) ** 2)));
+
+  const steps = 10;
+  const top = [], bottom = [];
+  for (let i = 0; i < steps; i++) {
+    const s = i / (steps - 1);
+    const out = eyeW * PAST * (1 - s) ** 1.5;
+    const u = at(lash, s);
+    const l = at(lower, s);
+    const mid = lerp(u, l, 0.5);
+    const closing = s ** 2.2;
+    const bu = lerp(u, mid, closing);
+    const bl = lerp(l, mid, closing);
+    const up = eyeW * UP * profile(s);
+    const down = eyeW * DOWN * profile(s);
+    top.push({ x: bu.x + ux * out + vx * up, y: bu.y + uy * out + vy * up });
+    bottom.push({ x: bl.x + ux * out - vx * down, y: bl.y + uy * out - vy * down });
+  }
+
+  const fw = faceWidth(lm, w, h);
+  const dabs = [];
+  const rows = 4;
+  for (let i = 0; i < steps; i++) {
+    const s = i / (steps - 1);
+    for (let j = 0; j < rows; j++) {
+      const t = j / (rows - 1);
+      dabs.push({
+        p: lerp(bottom[i], top[i], t),
+        radius: fw * 0.032,
+        // Heaviest at the corner, and worked into the two lash lines rather
+        // than across the eye between them — depth sits on the lid and on
+        // the skin under the lower lashes. Product laid over the opening is
+        // wasted anyway: the eye is repainted on top of it.
+        weight: (1 - s) ** 1.2 * (0.42 + 0.58 * Math.abs(2 * t - 1) ** 0.8),
+      });
+    }
+  }
+  return { kind: "brush", dabs, pts: top.concat(bottom.reverse()), closed: true };
 }
 
 /** Colour laid on the lower lid itself (下眼皮铺色), outer weighted. */
@@ -562,6 +682,65 @@ function irisDisc(lm, irisIdx, w, h) {
  * Shared by the live-view painters, the tutorial highlight, and the
  * reference-photo zoom/trace overlay, so all three always agree.
  */
+// The landmarks that say whether one side of the face is presented to the
+// camera at all: its eye, brow, cheek and temple.
+const SIDE_POINTS = {
+  left: [...LEFT_EYE, ...LEFT_BROW, ...LEFT_CHEEK, LEFT_TEMPLE],
+  right: [...RIGHT_EYE, ...RIGHT_BROW, ...RIGHT_CHEEK, RIGHT_TEMPLE],
+};
+
+/**
+ * How much of each side of the face the camera can actually see, 0..1.
+ *
+ * The mesh is fitted to a whole head, so it keeps reporting a full set of
+ * landmarks for an eye that has left the frame or turned away behind the
+ * nose — and a guide drawn from them outlines a feature that is not there
+ * to work on. Someone following the trace would be drawing on nothing.
+ *
+ * Two things are measurable without guessing:
+ *
+ *   in frame — the fraction of that side's landmarks inside the picture,
+ *     with a margin, since a feature grazing the edge is already unusable.
+ *   facing   — that eye's width against its partner's. Two eyes are the
+ *     same width on any face, so a large difference is head yaw and
+ *     nothing else: real asymmetry is a few percent, while the turned-away
+ *     eye is at half width a third of the way to profile.
+ *
+ * The lower of the two governs — either failure on its own is enough.
+ * Neither can see hair falling over an eye; that stays a limit.
+ */
+export function sideExposure(lm, w, h) {
+  const inset = Math.min(w, h) * 0.02;
+  const inFrame = (indices) => {
+    let n = 0;
+    for (const i of indices) {
+      const p = px(lm, i, w, h);
+      if (p.x >= inset && p.x <= w - inset && p.y >= inset && p.y <= h - inset) n++;
+    }
+    return n / indices.length;
+  };
+  const facing = (near, far) => {
+    const ratio = far > 0 ? near / far : 1;
+    return Math.max(0, Math.min(1, (ratio - 0.3) / 0.25));
+  };
+  const lw = eyeWidth(lm, LEFT_LASH, w, h);
+  const rw = eyeWidth(lm, RIGHT_LASH, w, h);
+  return {
+    left: Math.min(inFrame(SIDE_POINTS.left), facing(lw, rw)),
+    right: Math.min(inFrame(SIDE_POINTS.right), facing(rw, lw)),
+  };
+}
+
+/**
+ * Tag the two halves of a paired region. Which side a shape belongs to is
+ * what lets a trace be withheld when that side of the face is turned away
+ * or out of frame — see sideExposure.
+ */
+function sided(left, right) {
+  const tag = (s, side) => (Array.isArray(s) ? s : [s]).map((x) => ({ ...x, side }));
+  return tag(left, "left").concat(tag(right, "right"));
+}
+
 export function regionShapes(lm, layer, w, h, opts) {
   const o = typeof opts === "string" ? { blushStyle: opts } : (opts ?? {});
   const variant = o.blushStyle;
@@ -576,78 +755,78 @@ export function regionShapes(lm, layer, w, h, opts) {
     case "foundation":
       return [{ kind: "poly", pts: toPoints(lm, FACE_OVAL, w, h) }];
     case "brows":
-      return [
+      return sided(
         browBrush(lm, LEFT_BROW, w, h, brows?.[0]),
         browBrush(lm, RIGHT_BROW, w, h, brows?.[1]),
-      ];
+      );
     case "eyeshadow":
-      return [
+      return sided(
         shadowBrush(lm, LEFT_LASH, LEFT_LASH_BROW, w, h),
         shadowBrush(lm, RIGHT_LASH, RIGHT_LASH_BROW, w, h),
-      ];
+      );
     case "eyeliner":
-      return [
+      return sided(
         { kind: "line", pts: toPoints(lm, LEFT_LASH, w, h),
           width: linerWidth(0, LEFT_LASH, Math.max(1.5, fw * 0.012)) },
         { kind: "line", pts: toPoints(lm, RIGHT_LASH, w, h),
           width: linerWidth(1, RIGHT_LASH, Math.max(1.5, fw * 0.012)) },
-      ];
+      );
     case "linerWing":
-      return [
+      return sided(
         { kind: "line", pts: outerWing(lm, LEFT_LASH, w, h, liner?.[0]),
           width: linerWidth(0, LEFT_LASH, Math.max(1.5, fw * 0.013)) },
         { kind: "line", pts: outerWing(lm, RIGHT_LASH, w, h, liner?.[1]),
           width: linerWidth(1, RIGHT_LASH, Math.max(1.5, fw * 0.013)) },
-      ];
+      );
     case "linerLower":
-      return [
+      return sided(
         { kind: "line", pts: lowerLinerPts(lm, LEFT_LOWER_LASH, w, h), width: Math.max(1.2, fw * 0.009) },
         { kind: "line", pts: lowerLinerPts(lm, RIGHT_LOWER_LASH, w, h), width: Math.max(1.2, fw * 0.009) },
-      ];
+      );
     case "aegyoSal":
-      return [
+      return sided(
         aegyoSalBrush(lm, LEFT_LASH, LEFT_LOWER_LASH, w, h, aegyo?.[0]),
         aegyoSalBrush(lm, RIGHT_LASH, RIGHT_LOWER_LASH, w, h, aegyo?.[1]),
-      ];
+      );
     case "underEyeShade":
-      return [
+      return sided(
         underEyeShadeBrush(lm, LEFT_LASH, LEFT_LOWER_LASH, w, h),
         underEyeShadeBrush(lm, RIGHT_LASH, RIGHT_LOWER_LASH, w, h),
-      ];
+      );
     case "lashes":
-      return [
-        ...lashStrokes(lm, LEFT_LASH, LEFT_EYE, w, h),
-        ...lashStrokes(lm, RIGHT_LASH, RIGHT_EYE, w, h),
-      ];
+      return sided(
+        lashStrokes(lm, LEFT_LASH, LEFT_EYE, w, h),
+        lashStrokes(lm, RIGHT_LASH, RIGHT_EYE, w, h),
+      );
     case "lowerLid":
-      return [
+      return sided(
         lowerLidBrush(lm, LEFT_LASH, LEFT_LOWER_LASH, w, h),
         lowerLidBrush(lm, RIGHT_LASH, RIGHT_LOWER_LASH, w, h),
-      ];
+      );
     case "outerCorner":
-      return [
+      return sided(
         outerCornerBrush(lm, LEFT_LASH, LEFT_LOWER_LASH, w, h),
         outerCornerBrush(lm, RIGHT_LASH, RIGHT_LOWER_LASH, w, h),
-      ];
+      );
     case "innerCorner":
-      return [
+      return sided(
         innerCornerBrush(lm, LEFT_LASH, w, h),
         innerCornerBrush(lm, RIGHT_LASH, w, h),
-      ];
+      );
     case "lowerLashes":
-      return [
-        ...lowerLashStrokes(lm, LEFT_LOWER_LASH, LEFT_EYE, w, h),
-        ...lowerLashStrokes(lm, RIGHT_LOWER_LASH, RIGHT_EYE, w, h),
-      ];
+      return sided(
+        lowerLashStrokes(lm, LEFT_LOWER_LASH, LEFT_EYE, w, h),
+        lowerLashStrokes(lm, RIGHT_LOWER_LASH, RIGHT_EYE, w, h),
+      );
     case "lenses":
-      return [irisDisc(lm, LEFT_IRIS, w, h), irisDisc(lm, RIGHT_IRIS, w, h)];
+      return sided(irisDisc(lm, LEFT_IRIS, w, h), irisDisc(lm, RIGHT_IRIS, w, h));
     case "blush":
       return blushBrush(lm, variant, w, h);
     case "contour":
-      return [
+      return sided(
         contourBrush(lm, LEFT_CONTOUR, LEFT_CHEEK, w, h),
         contourBrush(lm, RIGHT_CONTOUR, RIGHT_CHEEK, w, h),
-      ];
+      );
     case "lipstick":
       return [{ kind: "poly", pts: toPoints(lm, LIPS_OUTER, w, h) }];
     default:
@@ -732,8 +911,16 @@ export function shapesBounds(shapes) {
  * maxScale keeps a tiny region (a lash line) from filling the frame at an
  * unusable magnification.
  */
-export function zoomTargetFor(lm, layer, w, h, { pad = 1.22, maxScale = 4, variant } = {}) {
-  const box = shapesBounds(regionShapes(lm, layer, w, h, variant));
+export function zoomTargetFor(lm, layer, w, h,
+  { pad = 1.22, maxScale = 4, variant, sides } = {}) {
+  let shapes = regionShapes(lm, layer, w, h, variant);
+  // A step that teaches both eyes with one of them out of shot belongs on
+  // the eye that is in shot, not framed halfway between the two.
+  if (sides) {
+    const visible = shapes.filter((s) => !s.side || sides[s.side]);
+    if (visible.length) shapes = visible;
+  }
+  const box = shapesBounds(shapes);
   if (!box) return null;
   const bw = Math.max(box.w * pad, 1);
   const bh = Math.max(box.h * pad, 1);
@@ -958,6 +1145,25 @@ export class MakeupRenderer {
     // Current (smoothed) camera; null until the first frame sizes it.
     this.view = null;
     this.scratchLayer = null;
+    // Which sides currently get a guide drawn on them, and how many parts
+    // of the current step's guide were withheld because of it — the UI says
+    // so, since a guide that simply vanishes reads as a fault.
+    this.shown = { left: true, right: true };
+    this.withheld = 0;
+  }
+
+  /**
+   * Sides clear enough to trace on. Held as state and switched on
+   * different thresholds in each direction: a head drifting across a
+   * single limit would blink its traces on and off, which is worse than
+   * either answer.
+   */
+  #visibleSides(lm, w, h) {
+    const seen = sideExposure(lm, w, h);
+    for (const side of ["left", "right"]) {
+      this.shown[side] = this.shown[side] ? seen[side] > 0.55 : seen[side] > 0.75;
+    }
+    return this.shown;
   }
 
   // Reusable offscreen layer for brush-composited products.
@@ -973,11 +1179,12 @@ export class MakeupRenderer {
   }
 
   /** Ease the live view toward the step's target region. */
-  #updateView(landmarks, zoomLayer, w, h, fit) {
+  #updateView(landmarks, zoomLayer, w, h, fit, sides) {
     const identity = { cx: w / 2, cy: h / 2, scale: 1 };
     let target = identity;
     if (landmarks && zoomLayer) {
-      target = zoomTargetFor(landmarks, zoomLayer, w, h, { variant: fit }) ?? identity;
+      target = zoomTargetFor(landmarks, zoomLayer, w, h, { variant: fit, sides })
+        ?? identity;
     }
     if (!this.view) {
       this.view = { ...target };
@@ -1009,7 +1216,11 @@ export class MakeupRenderer {
       brows: look?.browShape,
       aegyo: look?.aegyoShape,
     };
-    const view = this.#updateView(landmarks, options.zoomLayer, w, h, shapeOpts);
+    this.withheld = 0;
+    const sides = landmarks
+      ? this.#visibleSides(landmarks, w, h)
+      : { left: true, right: true };
+    const view = this.#updateView(landmarks, options.zoomLayer, w, h, shapeOpts, sides);
 
     ctx.save();
     // Mirror for selfie view, then frame the region being taught.
@@ -1054,7 +1265,7 @@ export class MakeupRenderer {
       if (options.highlightLayer) {
         this.#drawHighlight(
           landmarks, options.highlightLayer, w, h, fw, options.time ?? 0, view.scale,
-          shapeOpts,
+          shapeOpts, sides,
         );
       }
     }
@@ -1101,7 +1312,7 @@ export class MakeupRenderer {
     }
   }
 
-  #drawHighlight(lm, layer, w, h, fw, time, zoom = 1, variant) {
+  #drawHighlight(lm, layer, w, h, fw, time, zoom = 1, variant, sides) {
     const { ctx } = this;
     const pulse = 0.55 + 0.45 * Math.sin(time / 300);
     ctx.save();
@@ -1117,6 +1328,12 @@ export class MakeupRenderer {
     ctx.shadowBlur = 8 / zoom;
 
     for (const s of regionShapes(lm, layer, w, h, variant)) {
+      // Nothing is drawn over a side the camera cannot see: the guide would
+      // sit where the feature ought to be rather than where it is.
+      if (s.side && sides && !sides[s.side]) {
+        this.withheld++;
+        continue;
+      }
       traceShape(ctx, s);
       ctx.stroke();
     }

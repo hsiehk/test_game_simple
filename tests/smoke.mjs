@@ -45,6 +45,29 @@ page.on("pageerror", (e) => console.log("[pageerror]", e.message));
 const results = [];
 const check = (name, ok) => { results.push([name, ok]); console.log(ok ? "PASS" : "FAIL", name); };
 
+// Watch what the live render loop is actually asked to paint for a moment.
+// The app imports the same module URL, so patching the prototype catches the
+// options its own frames pass — the only way to see that the preview leaves
+// enabledLayers unset instead of filtering to the taught layers.
+const captureRenderOpts = async () => {
+  const { MakeupRenderer } = await import("./js/makeup.js");
+  const real = MakeupRenderer.prototype.render;
+  const seen = [];
+  MakeupRenderer.prototype.render = function (...args) {
+    seen.push(args[3]);
+    return real.apply(this, args);
+  };
+  await new Promise((r) => setTimeout(r, 250));
+  MakeupRenderer.prototype.render = real;
+  const last = seen[seen.length - 1];
+  return {
+    frames: seen.length,
+    filtered: last?.enabledLayers instanceof Set,
+    highlight: last?.highlightLayer ?? null,
+    zoom: last?.zoomLayer ?? null,
+  };
+};
+
 await page.goto("http://localhost:8123/");
 check("page loads with title", (await page.title()).includes("MirrorMuse"));
 check("5 look buttons render", (await page.locator("#look-list .look-btn").count()) === 5);
@@ -53,10 +76,38 @@ check("app state exposed", await page.evaluate(() => window.__app?.looks?.length
 // Tutorial UI works without camera.
 await page.click("#mode-toggle");
 check("tutorial opens", await page.locator("#tutorial-panel").isVisible());
-check("step 1 shown", (await page.locator("#step-counter").textContent()).includes("Step 1 of 6"));
+check("tutorial opens on the preview",
+  (await page.locator("#step-counter").textContent()).includes("Preview")
+  && await page.evaluate(() => window.__app.state.previewing === true));
+check("preview names the look and offers to begin",
+  (await page.locator("#step-title").textContent()).length > 0
+  && (await page.locator("#next-step").textContent()).includes("Begin"));
+await page.click("#next-step");
+check("Begin moves to step 1",
+  (await page.locator("#step-counter").textContent()).includes("Step 1 of 6")
+  && await page.evaluate(() => window.__app.state.previewing === false));
+check("step 1 restores the Back button",
+  (await page.locator("#prev-step").textContent()).includes("← Back")
+  && await page.locator("#prev-step").isEnabled());
+// Back from the first step is not a dead end any more: it is how you get
+// another look at the finished face before carrying on.
+await page.click("#prev-step");
+check("Back from step 1 returns to the preview",
+  await page.evaluate(() => window.__app.state.previewing === true));
+await page.click("#next-step");
 await page.click("#next-step");
 check("advances to step 2", (await page.locator("#step-counter").textContent()).includes("Step 2"));
+await page.click("#prev-step");
+check("steps back to step 1", (await page.locator("#step-counter").textContent()).includes("Step 1 of 6"));
+// At step 1 the panel's Back is disabled, so the way back to the preview is
+// the HUD arrow (or a mirror-mode tap, exercised further down).
+await page.locator("#hud-prev").dispatchEvent("click");
+check("going back from step 1 returns to the preview",
+  (await page.locator("#step-counter").textContent()).includes("Preview")
+  && await page.evaluate(() => window.__app.state.previewing === true));
 await page.click("#mode-toggle"); // exit
+check("exiting the tutorial clears the preview",
+  await page.evaluate(() => !window.__app.state.tutorialMode && !window.__app.state.previewing));
 
 // Look switching.
 await page.locator("#look-list .look-btn", { hasText: "Smokey" }).click();
@@ -155,7 +206,30 @@ if (process.env.SMOKE_FACE_IMAGE) {
       return d.some((v, i) => i % 4 !== 3 && v > 0);
     });
     check("reference crop has pixels", refDrawn);
+
+    // A photo look opens on the preview too, and the preview must paint the
+    // whole look: no layer filtered out, nothing highlighted, nothing zoomed.
+    check("photo tutorial opens on the preview",
+      await page.evaluate(() => window.__app.state.previewing === true)
+      && (await page.locator("#step-counter").textContent()).includes("Preview"));
+    const previewFrame = await page.evaluate(captureRenderOpts);
+    check(`preview paints every layer, unhighlighted and unzoomed (${previewFrame.frames} frames)`,
+      previewFrame.frames > 0 && previewFrame.filtered === false
+      && previewFrame.highlight === null && previewFrame.zoom === null);
+    const refPreview = await page.evaluate(() =>
+      document.getElementById("reference-canvas").toDataURL());
+
     // Step through: each step should redraw the crop for its own region.
+    await page.click("#next-step");
+    check("Begin moves the photo tutorial to step 1",
+      (await page.locator("#step-counter").textContent()).includes("Step 1 of")
+      && await page.evaluate(() => window.__app.state.previewing === false));
+    const stepFrame = await page.evaluate(captureRenderOpts);
+    check("step 1 goes back to painting only the layers taught so far",
+      stepFrame.filtered === true);
+    check("the preview reference framed the whole face, not the step's region",
+      refPreview !== await page.evaluate(() =>
+        document.getElementById("reference-canvas").toDataURL()));
     await page.click("#next-step");
     check("photo tutorial advances", (await page.locator("#step-counter").textContent()).includes("Step 2"));
 
@@ -592,6 +666,18 @@ if (process.env.SMOKE_FACE_IMAGE) {
     await page.mouse.click(stage2.x + stage2.width * 0.1, stage2.y + stage2.height / 2);
     check("tap left edge goes back",
       await page.evaluate(() => window.__app.state.stepIndex === 1));
+    // Tapping back off step 1 lands on the preview rather than doing nothing.
+    await page.mouse.click(stage2.x + stage2.width * 0.1, stage2.y + stage2.height / 2);
+    await page.mouse.click(stage2.x + stage2.width * 0.1, stage2.y + stage2.height / 2);
+    check("tapping back from step 1 returns to the preview",
+      await page.evaluate(() =>
+        window.__app.state.previewing && window.__app.state.tutorialMode));
+    check("HUD names the preview",
+      (await page.locator("#hud-chip").textContent()).includes("Preview"));
+    await page.mouse.click(stage2.x + stage2.width * 0.9, stage2.y + stage2.height / 2);
+    check("tapping forward from the preview begins the tutorial",
+      await page.evaluate(() =>
+        !window.__app.state.previewing && window.__app.state.stepIndex === 0));
     await page.click("#hud-exit");
     check("exit returns from mirror mode",
       await page.evaluate(() => !document.body.classList.contains("mirror-mode")));

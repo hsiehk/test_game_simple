@@ -813,18 +813,21 @@ export function readEyes(source, landmarks, w, h) {
 
 /**
  * Draw a zoomed crop of the reference photo focused on one layer's region,
- * with the trace shape outlined, into the given canvas.
+ * with the trace shape outlined, into the given canvas. With no layer — the
+ * preview, before any step is being taught — frame the whole face instead
+ * and outline nothing, since there is no one shape to trace yet.
  */
 export function drawReferenceCrop(canvas, image, landmarks, layer, variant) {
   const iw = image.width;
   const ih = image.height;
-  const shapes = regionShapes(landmarks, layer, iw, ih, variant);
+  const whole = !layer;
+  const shapes = regionShapes(landmarks, whole ? "foundation" : layer, iw, ih, variant);
   if (shapes.length === 0) return;
 
   const box = shapesBounds(shapes);
   if (!box) return;
-  const padX = box.w * 0.35 + iw * 0.02;
-  const padY = box.h * 0.45 + ih * 0.02;
+  const padX = whole ? box.w * 0.3 + iw * 0.02 : box.w * 0.35 + iw * 0.02;
+  const padY = whole ? box.h * 0.3 + ih * 0.02 : box.h * 0.45 + ih * 0.02;
   const cropX = Math.max(0, box.x - padX);
   const cropY = Math.max(0, box.y - padY);
   const cropW = Math.min(iw, box.x + box.w + padX) - cropX;
@@ -848,14 +851,16 @@ export function drawReferenceCrop(canvas, image, landmarks, layer, variant) {
   ctx.drawImage(image, 0, 0, iw, ih);
 
   // Trace outline, matching the live-view highlight styling.
-  ctx.strokeStyle = "#ffffff";
-  ctx.lineWidth = Math.max(1.5, 2.5 / s);
-  ctx.setLineDash([8 / s, 6 / s]);
-  ctx.shadowColor = "rgba(255,80,140,0.9)";
-  ctx.shadowBlur = 6 / s;
-  for (const shape of shapes) {
-    traceShape(ctx, shape);
-    ctx.stroke();
+  if (!whole) {
+    ctx.strokeStyle = "#ffffff";
+    ctx.lineWidth = Math.max(1.5, 2.5 / s);
+    ctx.setLineDash([8 / s, 6 / s]);
+    ctx.shadowColor = "rgba(255,80,140,0.9)";
+    ctx.shadowBlur = 6 / s;
+    for (const shape of shapes) {
+      traceShape(ctx, shape);
+      ctx.stroke();
+    }
   }
   ctx.restore();
 }
