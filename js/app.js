@@ -35,6 +35,7 @@ const els = {
   stepTip: document.getElementById("step-tip"),
   referenceWrap: document.getElementById("reference-wrap"),
   referenceCanvas: document.getElementById("reference-canvas"),
+  refCaption: document.getElementById("ref-caption"),
   refInset: document.getElementById("ref-inset"),
   refInsetWrap: document.getElementById("ref-inset-wrap"),
   zoomBtn: document.getElementById("zoom-btn"),
@@ -61,6 +62,7 @@ const state = {
   look: getLook("natural"),
   intensity: 0.8,
   tutorialMode: false,
+  previewing: false,
   stepIndex: 0,
   compare: false,
   running: false,
@@ -146,6 +148,8 @@ function refreshBlushRow() {
 function selectLook(id) {
   state.look = id === "photo" && state.photoLook ? state.photoLook : getLook(id);
   state.stepIndex = 0;
+  // A different look is a different finished face, so show it whole again.
+  state.previewing = state.tutorialMode;
   // A look carries its own placement; picking a new look adopts it.
   state.blushStyle = null;
   refreshLookButtons();
@@ -155,9 +159,22 @@ function selectLook(id) {
 
 function stepBy(delta) {
   const last = state.look.steps.length - 1;
+  // The preview sits one place before step 1: forward from it starts the
+  // tutorial, back from it leaves altogether.
+  if (state.previewing) {
+    if (delta > 0) {
+      state.previewing = false;
+    } else {
+      state.tutorialMode = false;
+      state.previewing = false;
+    }
+    refreshTutorial();
+    return;
+  }
   const next = state.stepIndex + delta;
-  if (next < 0) return;
-  if (next > last) {
+  if (next < 0) {
+    state.previewing = true;
+  } else if (next > last) {
     state.tutorialMode = false;
   } else {
     state.stepIndex = next;
@@ -167,30 +184,50 @@ function stepBy(delta) {
 
 function refreshTutorial() {
   const steps = state.look.steps;
-  const step = steps[state.stepIndex];
+  const step = state.previewing ? null : steps[state.stepIndex];
   els.tutorialPanel.classList.toggle("hidden", !state.tutorialMode);
   els.modeToggle.textContent = state.tutorialMode
     ? "Exit tutorial"
     : "Start tutorial";
   refreshHud();
-  if (!state.tutorialMode || !step) return;
-  els.stepCounter.textContent = `Step ${state.stepIndex + 1} of ${steps.length}`;
-  els.stepTitle.textContent = step.title;
-  els.stepInstruction.textContent = step.instruction;
-  els.stepTip.textContent = `Tip: ${step.tip}`;
-  els.prevBtn.disabled = state.stepIndex === 0;
-  els.nextBtn.textContent =
-    state.stepIndex === steps.length - 1 ? "Finish ✓" : "Next step →";
+  if (!state.tutorialMode || (!step && !state.previewing)) return;
+  if (state.previewing) {
+    // Nothing is being taught yet, so the panel says what the face is showing
+    // instead of counting a step.
+    els.stepCounter.textContent = "Preview";
+    els.stepTitle.textContent = state.look.name;
+    els.stepInstruction.textContent =
+      `This is the finished look on your own face, all of it at once. ${steps.length} steps get you there for real — start when you like what you see.`;
+    els.stepTip.textContent =
+      "Tip: hold “Hold to compare” to see your bare face underneath, and the intensity slider sets how strong the look sits.";
+    els.prevBtn.disabled = false;
+    els.prevBtn.textContent = "Back";
+    els.nextBtn.textContent = "Begin →";
+  } else {
+    els.stepCounter.textContent = `Step ${state.stepIndex + 1} of ${steps.length}`;
+    els.stepTitle.textContent = step.title;
+    els.stepInstruction.textContent = step.instruction;
+    els.stepTip.textContent = `Tip: ${step.tip}`;
+    // Never disabled: back from the first step returns to the preview.
+    els.prevBtn.disabled = false;
+    els.prevBtn.textContent = "← Back";
+    els.nextBtn.textContent =
+      state.stepIndex === steps.length - 1 ? "Finish ✓" : "Next step →";
+  }
 
-  // Photo-derived looks get a zoomed reference crop for the current step.
+  // Photo-derived looks get a zoomed reference crop for the current step, or
+  // the whole reference face while previewing, where no region is singled out.
   const showReference =
     state.look.id === "photo" && state.photoImage && state.photoLandmarks;
   els.referenceWrap.classList.toggle("hidden", !showReference);
   els.refInsetWrap.classList.toggle("hidden", !showReference);
+  els.refCaption.textContent = step
+    ? "Reference photo, zoomed to this step — trace the outlined shape on your face"
+    : "Reference photo — the whole look you are about to learn";
   if (showReference) {
     for (const canvas of [els.referenceCanvas, els.refInset]) {
       drawReferenceCrop(canvas, state.photoImage, state.photoLandmarks,
-        step.layer, blushStyleFor());
+        step?.layer ?? null, blushStyleFor());
     }
   }
 }
@@ -272,10 +309,14 @@ function refreshZoomBtn() {
 
 function refreshHud() {
   if (!state.mirrorMode) return;
-  const step = state.tutorialMode ? state.look.steps[state.stepIndex] : null;
-  els.hudChip.textContent = step
-    ? `${state.stepIndex + 1}/${state.look.steps.length} · ${step.title}`
-    : state.look.name;
+  const step = state.tutorialMode && !state.previewing
+    ? state.look.steps[state.stepIndex]
+    : null;
+  let chip = state.look.name;
+  if (step) chip = `${state.stepIndex + 1}/${state.look.steps.length} · ${step.title}`;
+  else if (state.tutorialMode) chip = `Preview · ${state.look.name}`;
+  els.hudChip.textContent = chip;
+  // The arrows stay up during the preview: a tap forward is what begins it.
   els.hudPrev.classList.toggle("hidden", !state.tutorialMode);
   els.hudNext.classList.toggle("hidden", !state.tutorialMode);
   els.hudHint.classList.toggle("hidden", !state.photoImage);
@@ -432,6 +473,7 @@ async function loadReferencePhoto(file) {
     selectLook("photo");
     refreshAdvice();
     state.tutorialMode = true;
+    state.previewing = true;
     state.stepIndex = 0;
     refreshTutorial();
     setStatus("");
@@ -450,6 +492,8 @@ function bindControls() {
 
   els.modeToggle.addEventListener("click", () => {
     state.tutorialMode = !state.tutorialMode;
+    // Every tutorial opens on the preview of the finished look.
+    state.previewing = state.tutorialMode;
     state.stepIndex = 0;
     refreshTutorial();
   });
@@ -602,7 +646,11 @@ function frameLoop(time) {
     }
   }
 
-  const step = state.tutorialMode ? state.look.steps[state.stepIndex] : null;
+  // The preview has no current step, which is exactly what paints the whole
+  // look with nothing highlighted and nothing zoomed.
+  const step = state.tutorialMode && !state.previewing
+    ? state.look.steps[state.stepIndex]
+    : null;
 
   // In tutorial mode, only layers up to the current step are applied,
   // so the look builds up as the user progresses.
@@ -638,6 +686,11 @@ function frameLoop(time) {
   if (!els.status.classList.contains("error")) {
     if (!landmarks) {
       setStatus("No face detected — center your face in the frame.");
+    } else if (renderer.withheld > 0) {
+      // Say why half a guide went missing, or turning your head looks like
+      // the app losing track of you.
+      setStatus("One side of your face is turned away or out of frame — "
+        + "its guide is hidden until you can see it to work on it.");
     } else {
       setStatus("");
     }

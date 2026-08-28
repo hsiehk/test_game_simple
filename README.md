@@ -17,6 +17,11 @@ and no photos or video ever leave your machine.
   Eye and Bold Lip, with palettes drawn from editorial conventions (sheer
   skin, taupe and bronze lids, graphite smoke, blue-red lip) rather than
   saturated filter colors.
+- **Preview before you start** — every tutorial opens on the finished look
+  painted on your own face, all products at once, with nothing highlighted
+  and nothing zoomed. Hold to compare against your bare face, decide you
+  want it, then begin; step one is one press away, and the first step's
+  Back returns to it.
 - **Tutorial mode** — the heart of the app. Each look has written steps with
   pro tips (six for the simplest, fifteen for the Korean eye); the current step's region (lip line, crease, apples of the cheeks…)
   is outlined on your face with an animated dashed highlight, and the virtual
@@ -48,6 +53,22 @@ and no photos or video ever leave your machine.
   feature adds dark pixels and inflates the measurement. A missing side
   borrows, and a side suspiciously larger than its partner is disbelieved and
   borrows too. Genuine asymmetry within tolerance is kept.
+- **No guide on a feature you cannot see** — the face mesh is fitted to a
+  whole head, so it keeps reporting an eye that has left the frame or
+  turned away behind the nose, and a guide drawn from it outlines a feature
+  that is not there to work on. Each side of the face is checked two ways:
+  how much of it is inside the picture, and how wide that eye is against
+  its partner, since two eyes are the same width on any face and a large
+  difference is head yaw and nothing else. A side that fails either one
+  loses its trace and its half of the step zoom, and the mirror says why.
+  Neither test can see hair falling over an eye; that stays a limit.
+- **Traces outline the product, not the brush marks** — a deposit laid down
+  as scattered dabs (corner depth, blush) has no path running through it,
+  so the guide is the boundary around the dabs rather than a tour of their
+  centres, which is what used to draw a knot of circles at the outer corner
+  of the eye. Outer-corner depth is now built outline-first: a wedge
+  anchored past the corner, widest just inside it, closing to a point as it
+  runs in along the lash lines.
 - **The whole eye, taught in order** — lid wash, lower-lid colour (下眼皮铺色),
   outer-corner depth (眼尾), upper liner, tail, lower liner, inner-corner
   shimmer (眼头), aegyo-sal highlight (卧蚕) and the shading beneath it, then
